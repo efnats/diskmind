@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""
+diskmind-fetch - Data Collection
+Collects SMART data from remote hosts via SSH and stores in SQLite.
+"""
+
+import argparse
+import csv
+import io
+import os
+import sqlite3
+import subprocess
+import sys
+from datetime import datetime
+from pathlib import Path
+
+import yaml
+
+
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    
+    # Load hosts from file if specified
+    if 'hosts_file' in config:
+        with open(config['hosts_file']) as f:
+            config['hosts'] = [
+                line.strip() for line in f 
+                if line.strip() and not line.startswith('#')
+            ]
+    
+    return config
+
+
+def init_database(db_path: str) -> sqlite3.Connection:
+    """Initialize SQLite database."""
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS readings (
+            serial TEXT NOT NULL,
+            timestamp DATETIME NOT NULL,
+            host TEXT NOT NULL,
+            device TEXT NOT NULL,
+            type TEXT,
+            model TEXT,
+            capacity_bytes INTEGER,
+            smart_status TEXT,
+            smart_attributes TEXT,
+            PRIMARY KEY (serial, timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
+    ''')
+    
+    return conn
+
+
+def get_local_script_path() -> str:
+    """Get path to diskmind-scan."""
+    # Try multiple locations
+    base_dir = Path(__file__).parent.parent
+    candidates = [
+        base_dir / 'lib' / 'diskmind-scan',
+        base_dir / 'diskmind-scan',
+        Path(__file__).parent / 'diskmind-scan',
+    ]
+    
+    for path in candidates:
+        if path.exists():
+            return str(path)
+    
+    # Fallback
+    return str(candidates[0])
+
+
+def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> list[dict]:
+    """Collect SMART data from a single host via SSH (or locally for localhost)."""
+    script_path = get_local_script_path()
+    
+    # Read script content
+    with open(script_path) as f:
+        script_content = f.read()
+    
+    try:
+        # Execute locally for localhost
+        if host in ('localhost', '127.0.0.1'):
+            result = subprocess.run(
+                ['bash', '-c', script_content],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+        else:
+            # Execute script on remote host via SSH
+            result = subprocess.run(
+                [
+                    'ssh',
+                    '-o', 'BatchMode=yes',
+                    '-o', f'ConnectTimeout={ssh_timeout}',
+                    '-o', 'StrictHostKeyChecking=accept-new',
+                    f'{ssh_user}@{host}',
+                    'bash -s'
+                ],
+                input=script_content,
+                capture_output=True,
+                text=True,
+                timeout=ssh_timeout + 60
+            )
+        
+        if result.returncode != 0:
+            error_msg = result.stderr.strip() or result.stdout.strip() or f"Exit code {result.returncode}"
+            print(f"✗ failed: {error_msg}", file=sys.stderr)
+            return []
+        
+        # Check if output is empty
+        if not result.stdout.strip():
+            print(f"✗ failed: No output (smartctl installed? root privileges?)", file=sys.stderr)
+            return []
+        
+        # Parse CSV
+        readings = []
+        reader = csv.DictReader(io.StringIO(result.stdout))
+        for row in reader:
+            row['host'] = host
+            readings.append(row)
+        
+        if not readings:
+            print(f"✗ failed: No disks found", file=sys.stderr)
+            return []
+        
+        return readings
+        
+    except subprocess.TimeoutExpired:
+        print(f"✗ failed: Timeout after {ssh_timeout}s", file=sys.stderr)
+        return []
+    except FileNotFoundError as e:
+        print(f"✗ failed: {e.filename} not found", file=sys.stderr)
+        return []
+    except Exception as e:
+        print(f"✗ failed: {e}", file=sys.stderr)
+        return []
+
+
+def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: str):
+    """Store readings in database."""
+    cursor = conn.cursor()
+    
+    for r in readings:
+        try:
+            cursor.execute('''
+                INSERT OR REPLACE INTO readings 
+                (serial, timestamp, host, device, type, model, capacity_bytes,
+                 smart_status, smart_attributes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                r.get('serial'),
+                timestamp,
+                r.get('host'),
+                r.get('device'),
+                r.get('type'),
+                r.get('model'),
+                int(r.get('capacity_bytes') or 0),
+                r.get('smart_status'),
+                r.get('smart_attributes', '{}'),
+            ))
+        except Exception as e:
+            print(f"  Warning: Failed to store {r.get('serial')}: {e}", file=sys.stderr)
+    
+    conn.commit()
+
+
+def cleanup_old_data(conn: sqlite3.Connection, retention_days: int):
+    """Remove data older than retention period."""
+    cursor = conn.cursor()
+    cursor.execute('''
+        DELETE FROM readings 
+        WHERE timestamp < datetime('now', ?)
+    ''', (f'-{retention_days} days',))
+    
+    deleted = cursor.rowcount
+    if deleted > 0:
+        print(f"  Cleaned up {deleted} old records")
+    
+    conn.commit()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Collect SMART data from remote hosts'
+    )
+    parser.add_argument(
+        '-c', '--config',
+        default='config.yaml',
+        help='Path to config file (default: config.yaml)'
+    )
+    parser.add_argument(
+        '--hosts',
+        help='Comma-separated list of hosts (overrides config)'
+    )
+    parser.add_argument(
+        '--db',
+        help='Database path (overrides config)'
+    )
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Verbose output'
+    )
+    
+    args = parser.parse_args()
+    
+    # Load config
+    if os.path.exists(args.config):
+        config = load_config(args.config)
+    else:
+        config = {'hosts': [], 'ssh': {}, 'database': {}}
+    
+    # Override with CLI args
+    if args.hosts:
+        config['hosts'] = [h.strip() for h in args.hosts.split(',')]
+    if args.db:
+        config['database']['path'] = args.db
+    
+    # Validate
+    if not config.get('hosts'):
+        # Default to localhost if no hosts specified
+        config['hosts'] = ['localhost']
+        print("No hosts specified, using localhost")
+    
+    # Settings
+    db_path = config.get('database', {}).get('path', './data/smart.db')
+    ssh_user = config.get('ssh', {}).get('user', 'root')
+    ssh_timeout = config.get('ssh', {}).get('timeout', 30)
+    retention_days = config.get('database', {}).get('retention_days', 365)
+    
+    # Initialize
+    print("diskmind-fetch - Data Collection")
+    print("=" * 40)
+    print(f"Hosts: {len(config['hosts'])}")
+    print(f"Database: {db_path}")
+    print()
+    
+    conn = init_database(db_path)
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Collect from all hosts
+    total_disks = 0
+    successful_hosts = 0
+    
+    print("Collecting data:")
+    for host in config['hosts']:
+        print(f"  → {host}...", end=' ', flush=True)
+        
+        readings = collect_from_host(host, ssh_user, ssh_timeout)
+        
+        if readings:
+            store_readings(conn, readings, timestamp)
+            total_disks += len(readings)
+            successful_hosts += 1
+            print(f"✓ {len(readings)} disks")
+        else:
+            print("✗ failed")
+    
+    print()
+    print(f"Collected: {total_disks} disks from {successful_hosts}/{len(config['hosts'])} hosts")
+    
+    # Cleanup old data
+    if retention_days > 0:
+        cleanup_old_data(conn, retention_days)
+    
+    conn.close()
+    
+    print("Done!")
+    return 0 if successful_hosts > 0 else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

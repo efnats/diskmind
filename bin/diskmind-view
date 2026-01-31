@@ -1,0 +1,935 @@
+#!/usr/bin/env python3
+"""
+diskmind - Web Server
+Serves live reports from SQLite database.
+"""
+
+import argparse
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import threading
+from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from urllib.parse import urlparse, parse_qs
+
+# Optional: yaml for config
+try:
+    import yaml
+    HAS_YAML = True
+except ImportError:
+    HAS_YAML = False
+
+# ---------------------------------------------------------------------------
+# Database Functions
+# ---------------------------------------------------------------------------
+
+def get_db_connection(db_path: str) -> sqlite3.Connection:
+    """Get database connection with row factory."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def get_current_readings(db_path: str) -> list[dict]:
+    """Get most recent reading for each disk."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    
+    # Get latest reading per serial
+    cursor.execute('''
+        SELECT * FROM readings
+        WHERE (serial, timestamp) IN (
+            SELECT serial, MAX(timestamp) FROM readings GROUP BY serial
+        )
+        ORDER BY host, device
+    ''')
+    
+    results = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return results
+
+
+def get_trends(db_path: str, days: int = 30) -> dict:
+    """Get sector trends for each disk (reallocated sectors change over time)."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    
+    # Get all readings from last N days
+    cursor.execute('''
+        SELECT serial, smart_attributes, timestamp
+        FROM readings
+        WHERE timestamp > datetime('now', ?)
+        ORDER BY serial, timestamp
+    ''', (f'-{days} days',))
+    
+    # Group by serial and extract reallocated sectors
+    by_serial = {}
+    for row in cursor.fetchall():
+        serial = row['serial']
+        if serial not in by_serial:
+            by_serial[serial] = []
+        
+        attrs = row['smart_attributes']
+        if isinstance(attrs, str):
+            try:
+                attrs = json.loads(attrs)
+            except:
+                attrs = {}
+        
+        realloc = int(attrs.get('Reallocated_Sector_Ct', 0) or 0)
+        by_serial[serial].append(realloc)
+    
+    # Calculate trends
+    trends = {}
+    for serial, values in by_serial.items():
+        if len(values) >= 2:
+            delta = values[-1] - values[0]
+            if delta != 0:
+                trends[serial] = {
+                    'old': values[0],
+                    'new': values[-1],
+                    'delta': delta
+                }
+    
+    conn.close()
+    return trends
+
+
+def get_hosts(db_path: str) -> list[str]:
+    """Get list of all hosts."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute('SELECT DISTINCT host FROM readings ORDER BY host')
+    hosts = [row['host'] for row in cursor.fetchall()]
+    conn.close()
+    return hosts
+
+
+def get_stats(readings: list[dict]) -> dict:
+    """Calculate summary statistics."""
+    total = len(readings)
+    critical = 0
+    warning = 0
+    healthy = 0
+    total_capacity = 0
+    
+    for r in readings:
+        total_capacity += r.get('capacity_bytes') or 0
+        
+        status = classify_disk(r)
+        if status == 'critical':
+            critical += 1
+        elif status == 'warning':
+            warning += 1
+        else:
+            healthy += 1
+    
+    return {
+        'total': total,
+        'critical': critical,
+        'warning': warning,
+        'healthy': healthy,
+        'total_capacity_tb': round(total_capacity / 1e12, 1) if total_capacity else 0,
+    }
+
+
+def classify_disk(r: dict) -> str:
+    """Classify disk status based on SMART attributes."""
+    if r.get('smart_status') not in ('PASSED', 'N/A', None):
+        return 'critical'
+    
+    # Parse smart_attributes if string
+    attrs = r.get('smart_attributes', {})
+    if isinstance(attrs, str):
+        try:
+            attrs = json.loads(attrs)
+        except:
+            attrs = {}
+    
+    # Check for warning signs in attributes
+    realloc = int(attrs.get('Reallocated_Sector_Ct', 0) or 0)
+    pending = int(attrs.get('Current_Pending_Sector', 0) or 0)
+    offline = int(attrs.get('Offline_Uncorrectable', 0) or 0)
+    
+    if realloc > 0 or pending > 0 or offline > 0:
+        return 'warning'
+    
+    return 'ok'
+
+
+def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts: list[str]) -> str:
+    """Generate static HTML report."""
+    # Group by host
+    by_host = {}
+    for r in readings:
+        host = r['host']
+        if host not in by_host:
+            by_host[host] = []
+        by_host[host].append(r)
+    
+    # Build host sections
+    host_sections = ''
+    for host in sorted(by_host.keys()):
+        disks = by_host[host]
+        
+        # Sort disks by type: NVMe -> SSD -> HDD -> Unknown
+        type_order = {'NVMe': 0, 'SSD': 1, 'HDD': 2, 'Unknown': 3}
+        disks.sort(key=lambda d: (type_order.get(d.get('type'), 3), d.get('device', '')))
+        
+        critical = sum(1 for d in disks if d['status'] == 'critical')
+        warning = sum(1 for d in disks if d['status'] == 'warning')
+        capacity_tb = sum(d.get('capacity_bytes') or 0 for d in disks) / 1e12
+        
+        badge_class = 'ok'
+        badge_text = 'OK'
+        if critical > 0:
+            badge_class = 'critical'
+            badge_text = f'{critical} critical'
+        elif warning > 0:
+            badge_class = 'warning'
+            badge_text = f'{warning} warning'
+        
+        rows = ''
+        for d in disks:
+            type_class = (d.get('type') or '').lower()
+            status_dot = 'ok' if d.get('smart_status') == 'PASSED' else 'fail'
+            cap = d.get('capacity_bytes') or 0
+            cap_fmt = f"{cap/1e12:.1f}TB" if cap >= 1e12 else f"{cap/1e9:.0f}GB"
+            trend_html = '<span class="trend">▲</span>' if trends.get(d['serial'], {}).get('delta', 0) > 0 else ''
+            
+            # Parse smart_attributes
+            smart_attrs = d.get('smart_attributes', {})
+            if isinstance(smart_attrs, str):
+                try:
+                    smart_attrs = json.loads(smart_attrs)
+                except:
+                    smart_attrs = {}
+            
+            # Get values from JSON
+            hours = int(smart_attrs.get('Power_On_Hours', 0) or 0)
+            hours_fmt = f"{hours/1000:.1f}k" if hours >= 1000 else str(hours)
+            temp = smart_attrs.get('Temperature_Celsius') or smart_attrs.get('Airflow_Temperature_Cel') or '-'
+            realloc = int(smart_attrs.get('Reallocated_Sector_Ct', 0) or 0)
+            pending = int(smart_attrs.get('Current_Pending_Sector', 0) or 0)
+            offline = int(smart_attrs.get('Offline_Uncorrectable', 0) or 0)
+            
+            issues = ''
+            if d.get('smart_status') not in ('PASSED', 'N/A'):
+                issues += '<span class="issue critical">SMART Failed</span>'
+            if realloc > 0:
+                issues += f'<span class="issue warning">{realloc} realloc</span>'
+            if pending > 0:
+                issues += f'<span class="issue warning">{pending} pending</span>'
+            if offline > 0:
+                issues += f'<span class="issue warning">{offline} offline</span>'
+            
+            # Build detail items from smart_attributes
+            detail_items = f'<div class="detail-item"><span class="label">Serial</span><span class="value">{d["serial"]}</span></div>'
+            
+            if smart_attrs:
+                for name, value in smart_attrs.items():
+                    display_name = name.replace('_', ' ')
+                    detail_items += f'<div class="detail-item"><span class="label">{display_name}</span><span class="value">{value}</span></div>'
+            else:
+                detail_items += '<div class="detail-item"><span class="label">No SMART data</span><span class="value">-</span></div>'
+            
+            # Add trend if available
+            if trends.get(d['serial'], {}).get('delta', 0) > 0:
+                detail_items += f'<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+{trends[d["serial"]]["delta"]} sectors</span></div>'
+            
+            rows += f'''<tr class="disk-row {d['status']}" data-type="{d.get('type')}" data-status="{d['status']}" onclick="toggleDetail('{d['serial']}')">
+                <td><span class="device-name">{d['device']}</span><span class="type-badge {type_class}">{d.get('type') or '?'}</span></td>
+                <td>{d.get('model') or '-'}</td>
+                <td class="mono muted">{d['serial']}</td>
+                <td>{cap_fmt}</td>
+                <td class="mono">{hours_fmt}{trend_html}</td>
+                <td>{temp}°</td>
+                <td><span class="status-dot {status_dot}"></span>{d.get('smart_status') or 'N/A'}</td>
+                <td>{issues or '-'}</td>
+            </tr>
+            <tr class="detail-row" id="detail-{d['serial']}">
+                <td colspan="8">
+                    <div class="detail-grid">
+                        {detail_items}
+                    </div>
+                </td>
+            </tr>'''
+        
+        host_sections += f'''<div class="host-group" data-host="{host}">
+            <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div><span class="host-name">{host}</span><span class="host-badge {badge_class}">{badge_text}</span></div>
+                <div class="host-stats">{len(disks)} drives · {capacity_tb:.1f} TB <span class="host-toggle">▼</span></div>
+            </div>
+            <div class="host-content">
+                <table class="disk-table">
+                    <thead><tr><th>Device</th><th>Model</th><th>Serial</th><th>Size</th><th>Hours</th><th>Temp</th><th>Status</th><th>Issues</th></tr></thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+        </div>'''
+    
+    # Host options for filter
+    host_options = ''.join(f'<option value="{h}">{h}</option>' for h in hosts)
+    
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    
+    return get_html_template().replace(
+        '<div id="content"><div class="loading">Loading...</div></div>',
+        f'<div id="content">{host_sections}</div>'
+    ).replace(
+        '<option value="">All Hosts</option>',
+        f'<option value="">All Hosts</option>{host_options}'
+    ).replace(
+        '<span class="timestamp" id="lastUpdate">Loading...</span>',
+        f'<span class="timestamp">{timestamp}</span>'
+    ).replace(
+        '<div class="stat-value" id="statCritical">-</div>',
+        f'<div class="stat-value" id="statCritical">{stats["critical"]}</div>'
+    ).replace(
+        '<div class="stat-value" id="statWarning">-</div>',
+        f'<div class="stat-value" id="statWarning">{stats["warning"]}</div>'
+    ).replace(
+        '<div class="stat-value" id="statHealthy">-</div>',
+        f'<div class="stat-value" id="statHealthy">{stats["healthy"]}</div>'
+    ).replace(
+        '<div class="stat-value" id="statTotal">-</div>',
+        f'<div class="stat-value" id="statTotal">{stats["total"]}</div>'
+    ).replace(
+        '<div class="stat-sub" id="statCapacity">-</div>',
+        f'<div class="stat-sub" id="statCapacity">{stats["total_capacity_tb"]} TB</div>'
+    ).replace(
+        '<button class="btn primary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>',
+        ''
+    ).replace(
+        'loadData();',
+        '// Static report - no auto-load'
+    ).replace(
+        "setInterval(loadData, 60000);",
+        "// Static report - no auto-refresh"
+    )
+
+
+# ---------------------------------------------------------------------------
+# HTML Template
+# ---------------------------------------------------------------------------
+
+def get_html_template() -> str:
+    """Return the HTML template."""
+    return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>diskmind</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #f8fafc; --bg-card: #ffffff; --bg-hover: #f1f5f9;
+            --text-primary: #0f172a; --text-secondary: #475569; --text-muted: #94a3b8;
+            --border: #e2e8f0; --accent: #3b82f6;
+            --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
+        }
+        [data-theme="dark"] {
+            --bg-primary: #0f172a; --bg-card: #1e293b; --bg-hover: #334155;
+            --text-primary: #f1f5f9; --text-secondary: #cbd5e1; --text-muted: #64748b;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg-primary); color: var(--text-primary); line-height: 1.5; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+        .header h1 { font-size: 22px; font-weight: 700; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .timestamp { font-size: 13px; color: var(--text-muted); }
+        .btn { background: var(--bg-hover); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text-secondary); transition: all 0.15s; }
+        .btn:hover { background: var(--border); }
+        .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+        .btn.primary:hover { opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+        .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; border-left: 4px solid var(--accent); cursor: pointer; transition: all 0.15s; }
+        .stat:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .stat.active { box-shadow: 0 0 0 2px var(--accent); }
+        .stat.critical { border-left-color: var(--danger); }
+        .stat.warning { border-left-color: var(--warning); }
+        .stat.healthy { border-left-color: var(--success); }
+        .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+        .stat-value { font-size: 28px; font-weight: 700; }
+        .stat.critical .stat-value { color: var(--danger); }
+        .stat.warning .stat-value { color: var(--warning); }
+        .stat-sub { font-size: 12px; color: var(--text-muted); }
+        
+        .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+        select, input[type="text"] { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
+        .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+        
+        .host-group { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
+        .host-header { padding: 12px 16px; background: var(--bg-hover); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .host-name { font-size: 14px; font-weight: 600; }
+        .host-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 500; margin-left: 12px; }
+        .host-badge.ok { background: rgba(16,185,129,0.1); color: var(--success); }
+        .host-badge.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
+        .host-badge.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
+        .host-stats { font-size: 12px; color: var(--text-muted); }
+        .host-toggle { transition: transform 0.2s; }
+        .host-group.collapsed .host-toggle { transform: rotate(-90deg); }
+        .host-group.collapsed .host-content { display: none; }
+        
+        .disk-table { width: 100%; border-collapse: collapse; }
+        .disk-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        .disk-table th.sortable { cursor: pointer; user-select: none; transition: color 0.15s; }
+        .disk-table th.sortable:hover { color: var(--text-primary); }
+        .sort-icon { opacity: 0.4; margin-left: 4px; font-size: 10px; }
+        .disk-table th.sortable:hover .sort-icon { opacity: 0.7; }
+        .disk-table td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+        .disk-table tbody tr { transition: background 0.1s; cursor: pointer; }
+        .disk-table tbody tr:hover { background: var(--bg-hover); }
+        
+        .disk-row.critical { background: rgba(239,68,68,0.04); }
+        .disk-row.critical td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+        .disk-row.warning { background: rgba(245,158,11,0.04); }
+        .disk-row.warning td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+        
+        .device-name { font-weight: 500; font-family: monospace; font-size: 12px; }
+        .type-badge { font-size: 9px; padding: 2px 5px; border-radius: 3px; font-weight: 600; margin-left: 8px; text-transform: uppercase; }
+        .type-badge.hdd { background: rgba(59,130,246,0.1); color: #3b82f6; }
+        .type-badge.ssd { background: rgba(16,185,129,0.1); color: #10b981; }
+        .type-badge.nvme { background: rgba(139,92,246,0.1); color: #8b5cf6; }
+        .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .status-dot.ok { background: var(--success); }
+        .status-dot.fail { background: var(--danger); }
+        .issue { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-right: 4px; }
+        .issue.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
+        .issue.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
+        .trend { font-size: 11px; color: var(--warning); }
+        .muted { color: var(--text-muted); }
+        .mono { font-family: monospace; font-size: 12px; }
+        
+        .detail-row { display: none; }
+        .detail-row.visible { display: table-row; }
+        .detail-row td { padding: 16px 20px; background: var(--bg-hover); }
+        .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+        .detail-item { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--bg-card); border-radius: 4px; font-size: 12px; }
+        .detail-item .label { color: var(--text-muted); }
+        .detail-item .value { font-weight: 500; font-family: monospace; }
+        
+        .footer { margin-top: 24px; text-align: center; font-size: 11px; color: var(--text-muted); }
+        .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+        .error { background: rgba(239,68,68,0.1); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 24px; }
+        
+        @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>diskmind</h1>
+            <div class="header-right">
+                <span class="timestamp" id="lastUpdate">Loading...</span>
+                <button class="btn" onclick="toggleTheme()" id="themeBtn" title="Toggle theme">☀️</button>
+                <button class="btn primary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>
+            </div>
+        </header>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div class="stats">
+            <div class="stat" onclick="filterStatus('')">
+                <div class="stat-label">Total</div>
+                <div class="stat-value" id="statTotal">-</div>
+                <div class="stat-sub" id="statCapacity">-</div>
+            </div>
+            <div class="stat healthy" onclick="filterStatus('healthy')">
+                <div class="stat-label">Healthy</div>
+                <div class="stat-value" id="statHealthy">-</div>
+                <div class="stat-sub">No Issues</div>
+            </div>
+            <div class="stat warning" onclick="filterStatus('warning')">
+                <div class="stat-label">Warning</div>
+                <div class="stat-value" id="statWarning">-</div>
+                <div class="stat-sub">Sector Issues</div>
+            </div>
+            <div class="stat critical" onclick="filterStatus('critical')">
+                <div class="stat-label">Critical</div>
+                <div class="stat-value" id="statCritical">-</div>
+                <div class="stat-sub">SMART Failed</div>
+            </div>
+        </div>
+        
+        <div class="filters">
+            <select id="hostFilter" onchange="applyFilters()">
+                <option value="">All Hosts</option>
+            </select>
+            <select id="typeFilter" onchange="applyFilters()">
+                <option value="">All Types</option>
+                <option value="HDD">HDD</option>
+                <option value="SSD">SSD</option>
+                <option value="NVMe">NVMe</option>
+            </select>
+            <input type="text" id="search" placeholder="Search..." onkeyup="applyFilters()">
+        </div>
+        
+        <div id="content"><div class="loading">Loading...</div></div>
+        
+        <footer class="footer">diskmind</footer>
+    </div>
+    
+    <script>
+    let data = { disks: [], hosts: [], stats: {}, trends: {} };
+    let statusFilter = '';
+    
+    async function loadData() {
+        try {
+            const response = await fetch('/api/disks');
+            if (!response.ok) throw new Error('Failed to load data');
+            data = await response.json();
+            renderData();
+            document.getElementById('error').style.display = 'none';
+        } catch (e) {
+            document.getElementById('error').textContent = 'Error: ' + e.message;
+            document.getElementById('error').style.display = 'block';
+        }
+    }
+    
+    function renderData() {
+        // Update stats
+        document.getElementById('statCritical').textContent = data.stats.critical || 0;
+        document.getElementById('statWarning').textContent = data.stats.warning || 0;
+        document.getElementById('statHealthy').textContent = data.stats.healthy || 0;
+        document.getElementById('statTotal').textContent = data.stats.total || 0;
+        document.getElementById('statCapacity').textContent = (data.stats.total_capacity_tb || 0) + ' TB';
+        document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+        
+        // Update host filter
+        const hostFilter = document.getElementById('hostFilter');
+        const currentHost = hostFilter.value;
+        hostFilter.innerHTML = '<option value="">All Hosts</option>' + 
+            data.hosts.map(h => `<option value="${h}">${h}</option>`).join('');
+        hostFilter.value = currentHost;
+        
+        // Group by host
+        const byHost = {};
+        data.disks.forEach(d => {
+            if (!byHost[d.host]) byHost[d.host] = [];
+            byHost[d.host].push(d);
+        });
+        
+        // Render hosts
+        let html = '';
+        for (const [host, disks] of Object.entries(byHost)) {
+            const critical = disks.filter(d => d.status === 'critical').length;
+            const warning = disks.filter(d => d.status === 'warning').length;
+            const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
+            
+            let badge = '<span class="host-badge ok">OK</span>';
+            if (critical > 0) badge = `<span class="host-badge critical">${critical} critical</span>`;
+            else if (warning > 0) badge = `<span class="host-badge warning">${warning} warning</span>`;
+            
+            html += `<div class="host-group" data-host="${host}">
+                <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <div><span class="host-name">${host}</span>${badge}</div>
+                    <div class="host-stats">${disks.length} drives · ${capacityTB} TB <span class="host-toggle">▼</span></div>
+                </div>
+                <div class="host-content">
+                    <table class="disk-table">
+                        <thead><tr>
+                            <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('temp')">Temp <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
+                            <th>Issues</th>
+                        </tr></thead>
+                        <tbody>${sortedDisks(disks).map(d => renderDisk(d)).join('')}</tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+        
+        document.getElementById('content').innerHTML = html || '<div class="loading">No data available</div>';
+        applyFilters();
+    }
+    
+    function renderDisk(d) {
+        const typeClass = (d.type || '').toLowerCase();
+        const statusDot = d.smart_status === 'PASSED' ? 'ok' : 'fail';
+        const capacity = d.capacity_bytes >= 1e12 ? (d.capacity_bytes / 1e12).toFixed(1) + 'TB' : (d.capacity_bytes / 1e9).toFixed(0) + 'GB';
+        const trend = data.trends[d.serial]?.delta > 0 ? '<span class="trend">▲</span>' : '';
+        
+        // Get values from smart_attributes JSON
+        const attrs = d.smart_attributes || {};
+        
+        // Find hours - try multiple possible names
+        let hours = parseInt(attrs.Power_On_Hours || attrs.Power_On_Hours_and_Msec || 0);
+        const hoursFmt = hours >= 1000 ? (hours / 1000).toFixed(1) + 'k' : (hours || '-');
+        
+        // Find temperature - try multiple possible names
+        let temp = attrs.Temperature_Celsius || attrs.Airflow_Temperature_Cel || attrs.Temperature || '';
+        // Extract just the number if it contains extra info like "31/53"
+        if (temp && typeof temp === 'string') {
+            const match = temp.match(/^\\d+/);
+            temp = match ? match[0] : temp;
+        }
+        temp = temp || '-';
+        
+        // Get problem indicators
+        const realloc = parseInt(attrs.Reallocated_Sector_Ct || 0);
+        const pending = parseInt(attrs.Current_Pending_Sector || 0);
+        const offline = parseInt(attrs.Offline_Uncorrectable || 0);
+        
+        let issues = '';
+        if (d.smart_status !== 'PASSED' && d.smart_status !== 'N/A') issues += '<span class="issue critical">SMART Failed</span>';
+        if (realloc > 0) issues += `<span class="issue warning">${realloc} realloc</span>`;
+        if (pending > 0) issues += `<span class="issue warning">${pending} pending</span>`;
+        if (offline > 0) issues += `<span class="issue warning">${offline} offline</span>`;
+        
+        // Render all SMART attributes from JSON object
+        let attrsHtml = '';
+        if (attrs && typeof attrs === 'object' && Object.keys(attrs).length > 0) {
+            for (const [name, value] of Object.entries(attrs)) {
+                const displayName = name.replace(/_/g, ' ');
+                attrsHtml += `<div class="detail-item"><span class="label">${displayName}</span><span class="value">${value}</span></div>`;
+            }
+        } else {
+            attrsHtml = '<div class="detail-item"><span class="label">No SMART data</span><span class="value">-</span></div>';
+        }
+        
+        // Add trend if available
+        if (data.trends[d.serial]?.delta > 0) {
+            attrsHtml += `<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+${data.trends[d.serial].delta} sectors</span></div>`;
+        }
+        
+        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${d.serial}')">
+            <td><span class="device-name">${d.device}</span><span class="type-badge ${typeClass}">${d.type}</span></td>
+            <td>${d.model || '-'}</td>
+            <td class="mono muted">${d.serial}</td>
+            <td>${capacity}</td>
+            <td class="mono">${hoursFmt}${trend}</td>
+            <td>${temp}°</td>
+            <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
+            <td>${issues || '-'}</td>
+        </tr>
+        <tr class="detail-row" id="detail-${d.serial}">
+            <td colspan="8">
+                <div class="detail-grid">
+                    <div class="detail-item"><span class="label">Serial</span><span class="value">${d.serial}</span></div>
+                    ${attrsHtml}
+                </div>
+            </td>
+        </tr>`;
+    }
+    
+    function toggleDetail(serial) {
+        document.getElementById('detail-' + serial)?.classList.toggle('visible');
+    }
+    
+    function filterStatus(s) {
+        statusFilter = s;
+        document.querySelectorAll('.stat').forEach(el => el.classList.remove('active'));
+        if (s) event.target.closest('.stat').classList.add('active');
+        applyFilters();
+    }
+    
+    function applyFilters() {
+        const host = document.getElementById('hostFilter').value;
+        const type = document.getElementById('typeFilter').value;
+        const search = document.getElementById('search').value.toLowerCase();
+        
+        document.querySelectorAll('.host-group').forEach(g => {
+            if (host && g.dataset.host !== host) { g.style.display = 'none'; return; }
+            g.style.display = '';
+            let visible = 0;
+            g.querySelectorAll('.disk-row').forEach(r => {
+                let show = true;
+                if (type && r.dataset.type !== type) show = false;
+                if (statusFilter && r.dataset.status !== statusFilter) show = false;
+                if (search && !r.textContent.toLowerCase().includes(search)) show = false;
+                r.style.display = show ? '' : 'none';
+                if (!show) document.getElementById('detail-' + r.querySelector('.mono')?.textContent)?.classList.remove('visible');
+                if (show) visible++;
+            });
+            if (!visible && (type || statusFilter || search)) g.style.display = 'none';
+        });
+    }
+    
+    let currentSort = {field: 'device', asc: true};
+    
+    function sortDisks(field) {
+        // Toggle direction if same field
+        if (currentSort.field === field) {
+            currentSort.asc = !currentSort.asc;
+        } else {
+            currentSort.field = field;
+            currentSort.asc = true;
+        }
+        
+        // Re-render with new sort
+        renderData();
+        
+        // Update sort icons
+        document.querySelectorAll('.sort-icon').forEach(i => i.textContent = '⇅');
+        document.querySelectorAll('.sortable').forEach(th => {
+            if (th.textContent.toLowerCase().includes(field)) {
+                th.querySelector('.sort-icon').textContent = currentSort.asc ? '↑' : '↓';
+            }
+        });
+    }
+    
+    function getSortValue(disk, field) {
+        const attrs = disk.smart_attributes || {};
+        switch(field) {
+            case 'device':
+                // Type order + device name for default sort
+                const typeOrder = {'NVMe': 0, 'SSD': 1, 'HDD': 2, 'Unknown': 3};
+                return (typeOrder[disk.type] ?? 3) * 1000 + disk.device;
+            case 'model': return disk.model || '';
+            case 'serial': return disk.serial || '';
+            case 'size': return disk.capacity_bytes || 0;
+            case 'hours': return parseInt(attrs.Power_On_Hours || 0);
+            case 'temp': return parseInt(attrs.Temperature_Celsius || attrs.Airflow_Temperature_Cel || attrs.Temperature || 0);
+            case 'status': 
+                const statusOrder = {'critical': 0, 'warning': 1, 'ok': 2};
+                return statusOrder[disk.status] ?? 2;
+            default: return 0;
+        }
+    }
+    
+    function sortedDisks(disks) {
+        return [...disks].sort((a, b) => {
+            let va = getSortValue(a, currentSort.field);
+            let vb = getSortValue(b, currentSort.field);
+            let cmp = 0;
+            if (typeof va === 'string') cmp = va.localeCompare(vb);
+            else cmp = va - vb;
+            return currentSort.asc ? cmp : -cmp;
+        });
+    }
+    
+    function refresh() {
+        const btn = document.getElementById('refreshBtn');
+        btn.disabled = true;
+        btn.textContent = '↻ Loading...';
+        loadData().finally(() => {
+            btn.disabled = false;
+            btn.textContent = '↻ Refresh';
+        });
+    }
+    
+    function toggleTheme() {
+        const isDark = document.body.getAttribute('data-theme') === 'dark';
+        document.body.setAttribute('data-theme', isDark ? '' : 'dark');
+        document.getElementById('themeBtn').textContent = isDark ? '☀️' : '🌙';
+        localStorage.setItem('theme', isDark ? 'light' : 'dark');
+    }
+    
+    // Init
+    if (localStorage.getItem('theme') === 'dark') {
+        document.body.setAttribute('data-theme', 'dark');
+        document.getElementById('themeBtn').textContent = '🌙';
+    }
+    loadData();
+    setInterval(loadData, 60000); // Auto-refresh every minute
+    </script>
+</body>
+</html>'''
+
+
+# ---------------------------------------------------------------------------
+# HTTP Request Handler
+# ---------------------------------------------------------------------------
+
+class SmartHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for diskmind."""
+    
+    db_path = './data/smart.db'
+    fetch_script = None
+    
+    def log_message(self, format, *args):
+        """Custom log format."""
+        print(f"[{self.log_date_time_string()}] {args[0]}")
+    
+    def send_json(self, data: dict, status: int = 200):
+        """Send JSON response."""
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
+    
+    def send_html(self, html: str, status: int = 200):
+        """Send HTML response."""
+        self.send_response(status)
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(html.encode())
+    
+    def do_GET(self):
+        """Handle GET requests."""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        
+        try:
+            if path == '/' or path == '/index.html':
+                self.send_html(get_html_template())
+            
+            elif path == '/api/disks':
+                readings = get_current_readings(self.db_path)
+                trends = get_trends(self.db_path)
+                stats = get_stats(readings)
+                hosts = list(set(r['host'] for r in readings))
+                
+                # Add status and parse smart_attributes JSON
+                for r in readings:
+                    if r.get('smart_status') not in ('PASSED', 'N/A', None):
+                        r['status'] = 'critical'
+                    elif (r.get('reallocated_sectors') or 0) > 0 or \
+                         (r.get('pending_sectors') or 0) > 0 or \
+                         (r.get('offline_uncorrectable') or 0) > 0:
+                        r['status'] = 'warning'
+                    else:
+                        r['status'] = 'ok'
+                    
+                    # Parse JSON string to dict
+                    if r.get('smart_attributes'):
+                        try:
+                            r['smart_attributes'] = json.loads(r['smart_attributes'])
+                        except:
+                            r['smart_attributes'] = {}
+                    else:
+                        r['smart_attributes'] = {}
+                
+                self.send_json({
+                    'disks': readings,
+                    'hosts': sorted(hosts),
+                    'stats': stats,
+                    'trends': trends,
+                })
+            
+            elif path == '/api/hosts':
+                hosts = get_hosts(self.db_path)
+                self.send_json({'hosts': hosts})
+            
+            elif path == '/api/stats':
+                readings = get_current_readings(self.db_path)
+                stats = get_stats(readings)
+                self.send_json(stats)
+            
+            else:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b'Not Found')
+        
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+    
+    def do_POST(self):
+        """Handle POST requests."""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        
+        try:
+            if path == '/api/collect':
+                # Trigger data collection
+                if self.fetch_script:
+                    result = subprocess.run(
+                        [sys.executable, self.fetch_script],
+                        capture_output=True,
+                        text=True,
+                        timeout=300
+                    )
+                    self.send_json({
+                        'success': result.returncode == 0,
+                        'output': result.stdout,
+                        'error': result.stderr,
+                    })
+                else:
+                    self.send_json({'error': 'Collect script not configured'}, 500)
+            else:
+                self.send_response(404)
+                self.end_headers()
+        
+        except Exception as e:
+            self.send_json({'error': str(e)}, 500)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(description='diskmind Web Server')
+    parser.add_argument('-p', '--port', type=int, default=8080, help='Port (default: 8080)')
+    parser.add_argument('--host', default='0.0.0.0', help='Host (default: 0.0.0.0)')
+    parser.add_argument('--db', default='./data/smart.db', help='Database path')
+    parser.add_argument('-c', '--config', default='config.yaml', help='Config file')
+    parser.add_argument('-o', '--output', help='Generate static HTML file and exit')
+    
+    args = parser.parse_args()
+    
+    # Load config
+    if HAS_YAML and os.path.exists(args.config):
+        with open(args.config) as f:
+            config = yaml.safe_load(f)
+        args.db = config.get('database', {}).get('path', args.db)
+    
+    # Check database
+    if not os.path.exists(args.db):
+        print(f"Error: Database not found: {args.db}", file=sys.stderr)
+        print("Run diskmind-fetch first to gather data.", file=sys.stderr)
+        sys.exit(1)
+    
+    # Static HTML export mode
+    if args.output:
+        print(f"Generating static report...")
+        print(f"Database: {args.db}")
+        
+        readings = get_current_readings(args.db)
+        trends = get_trends(args.db)
+        stats = get_stats(readings)
+        hosts = sorted(set(r['host'] for r in readings))
+        
+        for r in readings:
+            r['status'] = classify_disk(r)
+        
+        html = generate_static_html(readings, trends, stats, hosts)
+        
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.output, 'w') as f:
+            f.write(html)
+        
+        print(f"Output: {args.output}")
+        print(f"Disks: {stats['total']} ({stats['critical']} critical, {stats['warning']} warning)")
+        return
+    
+    # Set handler config
+    SmartHTTPHandler.db_path = args.db
+    SmartHTTPHandler.fetch_script = str(Path(__file__).parent / 'diskmind-fetch')
+    
+    # Start server
+    server = HTTPServer((args.host, args.port), SmartHTTPHandler)
+    
+    print(f"diskmind Web Server")
+    print(f"=" * 40)
+    print(f"Database: {args.db}")
+    print(f"URL: http://{args.host}:{args.port}")
+    print(f"")
+    print(f"Press Ctrl+C to stop")
+    print()
+    
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+        server.shutdown()
+
+
+if __name__ == '__main__':
+    main()

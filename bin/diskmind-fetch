@@ -40,6 +40,8 @@ def init_database(db_path: str) -> sqlite3.Connection:
     
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS readings (
+            disk_id TEXT NOT NULL,
+            wwn TEXT,
             serial TEXT NOT NULL,
             timestamp DATETIME NOT NULL,
             host TEXT NOT NULL,
@@ -49,11 +51,44 @@ def init_database(db_path: str) -> sqlite3.Connection:
             capacity_bytes INTEGER,
             smart_status TEXT,
             smart_attributes TEXT,
-            PRIMARY KEY (serial, timestamp)
+            PRIMARY KEY (disk_id, timestamp)
         );
         CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
         CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
+        CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
     ''')
+    
+    # Migrate from old schema (serial-based primary key)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(readings)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'disk_id' not in columns and 'serial' in columns:
+        print("  Migrating database to v1.1 schema (adding wwn, disk_id)...")
+        conn.executescript('''
+            ALTER TABLE readings RENAME TO readings_old;
+            CREATE TABLE readings (
+                disk_id TEXT NOT NULL,
+                wwn TEXT,
+                serial TEXT NOT NULL,
+                timestamp DATETIME NOT NULL,
+                host TEXT NOT NULL,
+                device TEXT NOT NULL,
+                type TEXT,
+                model TEXT,
+                capacity_bytes INTEGER,
+                smart_status TEXT,
+                smart_attributes TEXT,
+                PRIMARY KEY (disk_id, timestamp)
+            );
+            INSERT INTO readings (disk_id, wwn, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes)
+                SELECT serial, NULL, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes
+                FROM readings_old;
+            DROP TABLE readings_old;
+            CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
+            CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
+        ''')
+        print("  Migration complete.")
     
     return conn
 
@@ -150,13 +185,20 @@ def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: st
     
     for r in readings:
         try:
+            wwn = r.get('wwn', '').strip()
+            serial = r.get('serial', '').strip()
+            # Primary identifier: WWN if available, otherwise serial
+            disk_id = wwn if wwn else serial
+            
             cursor.execute('''
                 INSERT OR REPLACE INTO readings 
-                (serial, timestamp, host, device, type, model, capacity_bytes,
-                 smart_status, smart_attributes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (disk_id, wwn, serial, timestamp, host, device, type, model,
+                 capacity_bytes, smart_status, smart_attributes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                r.get('serial'),
+                disk_id,
+                wwn or None,
+                serial,
                 timestamp,
                 r.get('host'),
                 r.get('device'),

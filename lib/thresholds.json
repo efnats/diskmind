@@ -1,0 +1,106 @@
+{
+  "_comment": "Disk health threshold presets. Active preset is selected in data/config.json.",
+  "_source": "https://www.backblaze.com/blog/what-smart-stats-indicate-hard-drive-failures/",
+
+  "presets": {
+
+    "backblaze": {
+      "_description": "Based on Backblaze failure data (300k+ drives). Warning at any non-zero value, critical at elevated counts.",
+      "ata": {
+        "critical": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 100, "display": "reallocated sectors" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 10,  "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 10,  "display": "uncorrectable sectors" }
+        },
+        "warning": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 0, "display": "reallocated sectors" },
+          "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 0, "display": "uncorrectable errors" },
+          "Command_Timeout":        { "id": 188,  "op": ">", "value": 0, "display": "command timeouts" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 0, "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" }
+        }
+      },
+      "nvme": {
+        "critical": {
+          "Critical_Warning":                { "op": ">", "value": 0,  "display": "critical warning" },
+          "Media_and_Data_Integrity_Errors": { "op": ">", "value": 0,  "display": "media errors" },
+          "Available_Spare":                 { "op": "<", "value": 10, "display": "spare capacity low" },
+          "Percentage_Used":                 { "op": ">", "value": 95, "display": "life used" }
+        },
+        "warning": {
+          "Percentage_Used":                 { "op": ">", "value": 80, "display": "life used" },
+          "Available_Spare":                 { "op": "<", "value": 20, "display": "spare capacity" },
+          "Error_Information_Log_Entries":    { "op": ">", "value": 0,  "display": "error log entries" },
+          "Unsafe_Shutdowns":                { "op": ">", "value": 50, "display": "unsafe shutdowns" }
+        }
+      }
+    },
+
+    "conservative": {
+      "_description": "Stricter thresholds for critical data. Lower warning/critical triggers for earlier replacement.",
+      "ata": {
+        "critical": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 50,  "display": "reallocated sectors" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 5,   "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 5,   "display": "uncorrectable sectors" },
+          "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 10,  "display": "uncorrectable errors" },
+          "Command_Timeout":        { "id": 188,  "op": ">", "value": 50,  "display": "command timeouts" }
+        },
+        "warning": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 0, "display": "reallocated sectors" },
+          "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 0, "display": "uncorrectable errors" },
+          "Command_Timeout":        { "id": 188,  "op": ">", "value": 0, "display": "command timeouts" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 0, "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" }
+        }
+      },
+      "nvme": {
+        "critical": {
+          "Critical_Warning":                { "op": ">", "value": 0,  "display": "critical warning" },
+          "Media_and_Data_Integrity_Errors": { "op": ">", "value": 0,  "display": "media errors" },
+          "Available_Spare":                 { "op": "<", "value": 15, "display": "spare capacity low" },
+          "Percentage_Used":                 { "op": ">", "value": 85, "display": "life used" }
+        },
+        "warning": {
+          "Percentage_Used":                 { "op": ">", "value": 70, "display": "life used" },
+          "Available_Spare":                 { "op": "<", "value": 25, "display": "spare capacity" },
+          "Error_Information_Log_Entries":    { "op": ">", "value": 0,  "display": "error log entries" },
+          "Unsafe_Shutdowns":                { "op": ">", "value": 25, "display": "unsafe shutdowns" }
+        }
+      }
+    },
+
+    "relaxed": {
+      "_description": "Higher thresholds for home/lab use. Fewer false positives, only alert on clear degradation.",
+      "ata": {
+        "critical": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 500, "display": "reallocated sectors" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 100, "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 100, "display": "uncorrectable sectors" }
+        },
+        "warning": {
+          "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 10,  "display": "reallocated sectors" },
+          "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 10,  "display": "uncorrectable errors" },
+          "Command_Timeout":        { "id": 188,  "op": ">", "value": 100, "display": "command timeouts" },
+          "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 5,   "display": "pending sectors" },
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 5,   "display": "uncorrectable sectors" }
+        }
+      },
+      "nvme": {
+        "critical": {
+          "Critical_Warning":                { "op": ">", "value": 0,   "display": "critical warning" },
+          "Media_and_Data_Integrity_Errors": { "op": ">", "value": 10,  "display": "media errors" },
+          "Available_Spare":                 { "op": "<", "value": 5,   "display": "spare capacity low" },
+          "Percentage_Used":                 { "op": ">", "value": 100, "display": "life used" }
+        },
+        "warning": {
+          "Percentage_Used":                 { "op": ">", "value": 90,  "display": "life used" },
+          "Available_Spare":                 { "op": "<", "value": 15,  "display": "spare capacity" },
+          "Error_Information_Log_Entries":    { "op": ">", "value": 10,  "display": "error log entries" },
+          "Unsafe_Shutdowns":                { "op": ">", "value": 100, "display": "unsafe shutdowns" }
+        }
+      }
+    }
+
+  }
+}

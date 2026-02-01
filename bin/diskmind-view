@@ -39,11 +39,11 @@ def get_current_readings(db_path: str) -> list[dict]:
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     
-    # Get latest reading per serial
+    # Get latest reading per disk_id
     cursor.execute('''
         SELECT * FROM readings
-        WHERE (serial, timestamp) IN (
-            SELECT serial, MAX(timestamp) FROM readings GROUP BY serial
+        WHERE (disk_id, timestamp) IN (
+            SELECT disk_id, MAX(timestamp) FROM readings GROUP BY disk_id
         )
         ORDER BY host, device
     ''')
@@ -60,18 +60,18 @@ def get_trends(db_path: str, days: int = 30) -> dict:
     
     # Get all readings from last N days
     cursor.execute('''
-        SELECT serial, smart_attributes, timestamp
+        SELECT disk_id, smart_attributes, timestamp
         FROM readings
         WHERE timestamp > datetime('now', ?)
-        ORDER BY serial, timestamp
+        ORDER BY disk_id, timestamp
     ''', (f'-{days} days',))
     
-    # Group by serial and extract reallocated sectors
-    by_serial = {}
+    # Group by disk_id and extract reallocated sectors
+    by_disk = {}
     for row in cursor.fetchall():
-        serial = row['serial']
-        if serial not in by_serial:
-            by_serial[serial] = []
+        disk_id = row['disk_id']
+        if disk_id not in by_disk:
+            by_disk[disk_id] = []
         
         attrs = row['smart_attributes']
         if isinstance(attrs, str):
@@ -81,15 +81,15 @@ def get_trends(db_path: str, days: int = 30) -> dict:
                 attrs = {}
         
         realloc = int(attrs.get('Reallocated_Sector_Ct', 0) or 0)
-        by_serial[serial].append(realloc)
+        by_disk[disk_id].append(realloc)
     
     # Calculate trends
     trends = {}
-    for serial, values in by_serial.items():
+    for disk_id, values in by_disk.items():
         if len(values) >= 2:
             delta = values[-1] - values[0]
             if delta != 0:
-                trends[serial] = {
+                trends[disk_id] = {
                     'old': values[0],
                     'new': values[-1],
                     'delta': delta
@@ -137,8 +137,139 @@ def get_stats(readings: list[dict]) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Threshold-based Health Classification
+# ---------------------------------------------------------------------------
+
+DEFAULT_PRESET = 'backblaze'
+
+def _find_thresholds_file() -> Path | None:
+    """Locate lib/thresholds.json."""
+    base_dir = Path(__file__).parent.parent
+    candidates = [
+        base_dir / 'lib' / 'thresholds.json',
+        base_dir / 'thresholds.json',
+        Path(__file__).parent / 'thresholds.json',
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _get_config_path() -> Path:
+    """Get path to data/config.json (next to the database)."""
+    # Use the same data/ directory as the database
+    base_dir = Path(__file__).parent.parent
+    return base_dir / 'data' / 'config.json'
+
+
+def load_config() -> dict:
+    """Load user config from data/config.json."""
+    config_path = _get_config_path()
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def save_config(config: dict):
+    """Save user config to data/config.json."""
+    config_path = _get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(config_path, 'w') as f:
+        json.dump(config, f, indent=2)
+
+
+def load_all_presets() -> dict:
+    """Load all presets from thresholds.json."""
+    path = _find_thresholds_file()
+    if path:
+        try:
+            with open(path) as f:
+                data = json.load(f)
+            return data.get('presets', {})
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def load_thresholds() -> dict:
+    """Load active thresholds: config preset selection → resolve from presets."""
+    config = load_config()
+    preset_name = config.get('threshold_preset', DEFAULT_PRESET)
+    
+    presets = load_all_presets()
+    
+    # If preset exists, return its ata/nvme rules
+    if preset_name in presets:
+        preset = presets[preset_name]
+        return {
+            'ata': preset.get('ata', {}),
+            'nvme': preset.get('nvme', {}),
+        }
+    
+    # Fallback: try 'backblaze', then first available preset
+    if DEFAULT_PRESET in presets:
+        preset = presets[DEFAULT_PRESET]
+        return {
+            'ata': preset.get('ata', {}),
+            'nvme': preset.get('nvme', {}),
+        }
+    
+    if presets:
+        first = next(iter(presets.values()))
+        return {
+            'ata': first.get('ata', {}),
+            'nvme': first.get('nvme', {}),
+        }
+    
+    return {}
+
+
+# Cache thresholds at module level (invalidated on settings change)
+_thresholds = None
+
+def get_thresholds() -> dict:
+    global _thresholds
+    if _thresholds is None:
+        _thresholds = load_thresholds()
+    return _thresholds
+
+def invalidate_threshold_cache():
+    global _thresholds
+    _thresholds = None
+
+
+def check_threshold(attr_value, rule: dict) -> bool:
+    """Check if an attribute value exceeds a threshold rule."""
+    try:
+        val = float(attr_value)
+    except (ValueError, TypeError):
+        return False
+    
+    op = rule.get('op', '>')
+    threshold = rule.get('value', 0)
+    
+    if op == '>':
+        return val > threshold
+    elif op == '>=':
+        return val >= threshold
+    elif op == '<':
+        return val < threshold
+    elif op == '<=':
+        return val <= threshold
+    elif op == '==':
+        return val == threshold
+    return False
+
+
 def classify_disk(r: dict) -> str:
-    """Classify disk status based on SMART attributes."""
+    """Classify disk status using Backblaze/NVMe thresholds."""
+    # SMART self-test failure is always critical
     if r.get('smart_status') not in ('PASSED', 'N/A', None):
         return 'critical'
     
@@ -150,15 +281,82 @@ def classify_disk(r: dict) -> str:
         except:
             attrs = {}
     
-    # Check for warning signs in attributes
-    realloc = int(attrs.get('Reallocated_Sector_Ct', 0) or 0)
-    pending = int(attrs.get('Current_Pending_Sector', 0) or 0)
-    offline = int(attrs.get('Offline_Uncorrectable', 0) or 0)
+    thresholds = get_thresholds()
+    disk_type = (r.get('type') or '').strip()
     
-    if realloc > 0 or pending > 0 or offline > 0:
-        return 'warning'
+    # Select threshold set: NVMe uses 'nvme', everything else uses 'ata'
+    if disk_type == 'NVMe':
+        rules = thresholds.get('nvme', {})
+    else:
+        rules = thresholds.get('ata', {})
+    
+    # Check critical thresholds first
+    for attr_name, rule in rules.get('critical', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        val = attrs.get(attr_name)
+        if val is not None and check_threshold(val, rule):
+            return 'critical'
+    
+    # Check warning thresholds
+    for attr_name, rule in rules.get('warning', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        val = attrs.get(attr_name)
+        if val is not None and check_threshold(val, rule):
+            return 'warning'
     
     return 'ok'
+
+
+def get_disk_issues(r: dict) -> list[dict]:
+    """Get list of threshold violations for a disk."""
+    attrs = r.get('smart_attributes', {})
+    if isinstance(attrs, str):
+        try:
+            attrs = json.loads(attrs)
+        except:
+            attrs = {}
+    
+    thresholds = get_thresholds()
+    disk_type = (r.get('type') or '').strip()
+    
+    if disk_type == 'NVMe':
+        rules = thresholds.get('nvme', {})
+    else:
+        rules = thresholds.get('ata', {})
+    
+    issues = []
+    
+    # Check SMART self-test
+    if r.get('smart_status') not in ('PASSED', 'N/A', None):
+        issues.append({'level': 'critical', 'text': 'SMART Failed'})
+    
+    # Check critical thresholds
+    for attr_name, rule in rules.get('critical', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        val = attrs.get(attr_name)
+        if val is not None and check_threshold(val, rule):
+            display = rule.get('display', attr_name)
+            issues.append({'level': 'critical', 'text': f'{val} {display}'})
+    
+    # Check warning thresholds (skip if already critical for same attribute)
+    critical_attrs = set(rules.get('critical', {}).keys())
+    for attr_name, rule in rules.get('warning', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        # Skip if already flagged as critical
+        if attr_name in critical_attrs:
+            val = attrs.get(attr_name)
+            if val is not None and check_threshold(val, rules['critical'][attr_name]):
+                continue
+        val = attrs.get(attr_name)
+        if val is not None and check_threshold(val, rule):
+            display = rule.get('display', attr_name)
+            issues.append({'level': 'warning', 'text': f'{val} {display}'})
+    
+    return issues
 
 
 def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts: list[str]) -> str:
@@ -199,7 +397,8 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
             status_dot = 'ok' if d.get('smart_status') == 'PASSED' else 'fail'
             cap = d.get('capacity_bytes') or 0
             cap_fmt = f"{cap/1e12:.1f}TB" if cap >= 1e12 else f"{cap/1e9:.0f}GB"
-            trend_html = '<span class="trend">▲</span>' if trends.get(d['serial'], {}).get('delta', 0) > 0 else ''
+            disk_id = d.get('disk_id', d.get('serial', ''))
+            trend_html = '<span class="trend">▲</span>' if trends.get(disk_id, {}).get('delta', 0) > 0 else ''
             
             # Parse smart_attributes
             smart_attrs = d.get('smart_attributes', {})
@@ -213,22 +412,17 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
             hours = int(smart_attrs.get('Power_On_Hours', 0) or 0)
             hours_fmt = f"{hours/1000:.1f}k" if hours >= 1000 else str(hours)
             temp = smart_attrs.get('Temperature_Celsius') or smart_attrs.get('Airflow_Temperature_Cel') or '-'
-            realloc = int(smart_attrs.get('Reallocated_Sector_Ct', 0) or 0)
-            pending = int(smart_attrs.get('Current_Pending_Sector', 0) or 0)
-            offline = int(smart_attrs.get('Offline_Uncorrectable', 0) or 0)
             
+            # Use threshold-based issue detection
+            disk_issues = get_disk_issues(d)
             issues = ''
-            if d.get('smart_status') not in ('PASSED', 'N/A'):
-                issues += '<span class="issue critical">SMART Failed</span>'
-            if realloc > 0:
-                issues += f'<span class="issue warning">{realloc} realloc</span>'
-            if pending > 0:
-                issues += f'<span class="issue warning">{pending} pending</span>'
-            if offline > 0:
-                issues += f'<span class="issue warning">{offline} offline</span>'
+            for issue in disk_issues:
+                issues += f'<span class="issue {issue["level"]}">{issue["text"]}</span>'
             
             # Build detail items from smart_attributes
             detail_items = f'<div class="detail-item"><span class="label">Serial</span><span class="value">{d["serial"]}</span></div>'
+            if d.get('wwn'):
+                detail_items += f'<div class="detail-item"><span class="label">WWN</span><span class="value">{d["wwn"]}</span></div>'
             
             if smart_attrs:
                 for name, value in smart_attrs.items():
@@ -238,10 +432,12 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
                 detail_items += '<div class="detail-item"><span class="label">No SMART data</span><span class="value">-</span></div>'
             
             # Add trend if available
-            if trends.get(d['serial'], {}).get('delta', 0) > 0:
-                detail_items += f'<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+{trends[d["serial"]]["delta"]} sectors</span></div>'
+            if trends.get(disk_id, {}).get('delta', 0) > 0:
+                detail_items += f'<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+{trends[disk_id]["delta"]} sectors</span></div>'
             
-            rows += f'''<tr class="disk-row {d['status']}" data-type="{d.get('type')}" data-status="{d['status']}" onclick="toggleDetail('{d['serial']}')">
+            # Use disk_id (escaped) for HTML element IDs
+            eid = disk_id.replace('"', '').replace("'", '').replace(' ', '_')
+            rows += f'''<tr class="disk-row {d['status']}" data-type="{d.get('type')}" data-status="{d['status']}" onclick="toggleDetail('{eid}')">
                 <td><span class="device-name">{d['device']}</span><span class="type-badge {type_class}">{d.get('type') or '?'}</span></td>
                 <td>{d.get('model') or '-'}</td>
                 <td class="mono muted">{d['serial']}</td>
@@ -251,7 +447,7 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
                 <td><span class="status-dot {status_dot}"></span>{d.get('smart_status') or 'N/A'}</td>
                 <td>{issues or '-'}</td>
             </tr>
-            <tr class="detail-row" id="detail-{d['serial']}">
+            <tr class="detail-row" id="detail-{eid}">
                 <td colspan="8">
                     <div class="detail-grid">
                         {detail_items}
@@ -423,6 +619,66 @@ def get_html_template() -> str:
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
         .error { background: rgba(239,68,68,0.1); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 24px; }
         
+        /* === Settings Modal — fully opaque, hardcoded colors === */
+        .settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+        .settings-panel { width: 460px; max-width: 92vw; max-height: 82vh; border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; background: #f0f2f5; color: #1a1a2e; box-shadow: 0 8px 40px rgba(0,0,0,0.25); }
+        .settings-header { padding: 14px 18px; display: flex; justify-content: space-between; align-items: center; background: #ffffff; border-bottom: 1px solid #d5d9e0; flex-shrink: 0; }
+        .settings-header h2 { font-size: 15px; font-weight: 700; margin: 0; }
+        .settings-close { width: 28px; height: 28px; border-radius: 6px; border: none; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; background: #e8eaed; color: #555; }
+        .settings-close:hover { background: #d0d3d8; }
+        .settings-body { padding: 16px 18px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+        .settings-body:hover { scrollbar-color: rgba(150,150,150,0.4) transparent; }
+        .settings-body::-webkit-scrollbar { width: 6px; }
+        .settings-body::-webkit-scrollbar-track { background: transparent; }
+        .settings-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+        .settings-body:hover::-webkit-scrollbar-thumb { background: rgba(150,150,150,0.4); }
+        .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(150,150,150,0.6); }
+        [data-theme="dark"] .settings-body:hover { scrollbar-color: rgba(200,200,200,0.2) transparent; }
+        [data-theme="dark"] .settings-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
+        [data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(200,200,200,0.35); }
+        .settings-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; color: #555; }
+        .settings-section-hint { font-size: 12px; color: #777; margin: 0 0 10px 0; }
+        .preset-list { display: flex; flex-direction: column; gap: 6px; }
+        .preset-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; cursor: pointer; transition: background 0.12s; background: #ffffff; border: 1px solid #d5d9e0; }
+        .preset-option:hover { background: #e8edf3; }
+        .preset-option.active { background: #dbeafe; border-color: #93b4f5; }
+        .preset-option .preset-radio { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #999; flex-shrink: 0; position: relative; }
+        .preset-option.active .preset-radio { border-color: #3b82f6; background: #3b82f6; }
+        .preset-option.active .preset-radio::after { content: ''; position: absolute; top: 3px; left: 3px; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
+        .preset-option .preset-info { flex: 1; }
+        .preset-option .preset-name { font-size: 13px; font-weight: 600; color: #1a1a2e; text-transform: capitalize; }
+        .preset-option .preset-desc { font-size: 11px; color: #666; margin-top: 1px; line-height: 1.3; }
+        .preset-detail { margin-top: 14px; background: #ffffff; border: 1px solid #d5d9e0; border-radius: 6px; padding: 12px 14px; }
+        .preset-detail-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin-bottom: 8px; }
+        .preset-detail-group { font-size: 11px; font-weight: 700; color: #333; margin: 8px 0 4px 0; }
+        .preset-detail-group:first-child { margin-top: 0; }
+        .preset-detail table { width: 100%; border-collapse: collapse; }
+        .preset-detail th { text-align: left; font-size: 11px; font-weight: 600; color: #888; padding: 2px 6px 2px 0; border-bottom: 1px solid #e0e0e0; }
+        .preset-detail td { font-size: 12px; padding: 2px 6px 2px 0; font-family: 'SF Mono', 'Consolas', monospace; color: #333; }
+        .preset-detail .level-w { color: #d97706; }
+        .preset-detail .level-c { color: #dc2626; }
+        /* Dark mode overrides */
+        [data-theme="dark"] .settings-panel { background: #141c2b; color: #e2e8f0; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+        [data-theme="dark"] .settings-header { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .settings-header h2 { color: #e2e8f0; }
+        [data-theme="dark"] .settings-close { background: #2a3a52; color: #94a3b8; }
+        [data-theme="dark"] .settings-close:hover { background: #334766; }
+        [data-theme="dark"] .settings-section-title { color: #94a3b8; }
+        [data-theme="dark"] .settings-section-hint { color: #64748b; }
+        [data-theme="dark"] .preset-option { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .preset-option:hover { background: #1f2e45; }
+        [data-theme="dark"] .preset-option.active { background: #1a2d4d; border-color: #3b6fc0; }
+        [data-theme="dark"] .preset-option .preset-radio { border-color: #4a5568; }
+        [data-theme="dark"] .preset-option .preset-name { color: #e2e8f0; }
+        [data-theme="dark"] .preset-option .preset-desc { color: #94a3b8; }
+        [data-theme="dark"] .preset-detail { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .preset-detail-title { color: #94a3b8; }
+        [data-theme="dark"] .preset-detail-group { color: #cbd5e1; }
+        [data-theme="dark"] .preset-detail th { color: #64748b; border-color: #2a3a52; }
+        [data-theme="dark"] .preset-detail td { color: #cbd5e1; }
+        [data-theme="dark"] .preset-detail .level-w { color: #fbbf24; }
+        [data-theme="dark"] .preset-detail .level-c { color: #f87171; }
+        
         @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
     </style>
 </head>
@@ -433,11 +689,27 @@ def get_html_template() -> str:
             <div class="header-right">
                 <span class="timestamp" id="lastUpdate">Loading...</span>
                 <button class="btn" onclick="toggleTheme()" id="themeBtn" title="Toggle theme">☀️</button>
+                <button class="btn" onclick="toggleSettings()" id="settingsBtn" title="Settings">⚙️</button>
                 <button class="btn primary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>
             </div>
         </header>
         
         <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="settingsOverlay" class="settings-overlay" style="display:none;" onclick="if(event.target===this)toggleSettings()">
+            <div class="settings-panel">
+                <div class="settings-header">
+                    <h2>Settings</h2>
+                    <button class="settings-close" onclick="toggleSettings()">✕</button>
+                </div>
+                <div class="settings-body">
+                    <div class="settings-section-title">Threshold Preset</div>
+                    <p class="settings-section-hint">Affects dashboard status and future notifications.</p>
+                    <div id="presetList" class="preset-list">Loading...</div>
+                    <div id="presetDetail" class="preset-detail"></div>
+                </div>
+            </div>
+        </div>
         
         <div class="stats">
             <div class="stat" onclick="filterStatus('')">
@@ -562,7 +834,9 @@ def get_html_template() -> str:
         const typeClass = (d.type || '').toLowerCase();
         const statusDot = d.smart_status === 'PASSED' ? 'ok' : 'fail';
         const capacity = d.capacity_bytes >= 1e12 ? (d.capacity_bytes / 1e12).toFixed(1) + 'TB' : (d.capacity_bytes / 1e9).toFixed(0) + 'GB';
-        const trend = data.trends[d.serial]?.delta > 0 ? '<span class="trend">▲</span>' : '';
+        const diskId = d.disk_id || d.serial;
+        const eid = diskId.replace(/[\"' ]/g, '_');
+        const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
         
         // Get values from smart_attributes JSON
         const attrs = d.smart_attributes || {};
@@ -580,16 +854,13 @@ def get_html_template() -> str:
         }
         temp = temp || '-';
         
-        // Get problem indicators
-        const realloc = parseInt(attrs.Reallocated_Sector_Ct || 0);
-        const pending = parseInt(attrs.Current_Pending_Sector || 0);
-        const offline = parseInt(attrs.Offline_Uncorrectable || 0);
-        
+        // Get problem indicators from server-side threshold analysis
         let issues = '';
-        if (d.smart_status !== 'PASSED' && d.smart_status !== 'N/A') issues += '<span class="issue critical">SMART Failed</span>';
-        if (realloc > 0) issues += `<span class="issue warning">${realloc} realloc</span>`;
-        if (pending > 0) issues += `<span class="issue warning">${pending} pending</span>`;
-        if (offline > 0) issues += `<span class="issue warning">${offline} offline</span>`;
+        if (d.issues && d.issues.length > 0) {
+            for (const issue of d.issues) {
+                issues += `<span class="issue ${issue.level}">${issue.text}</span>`;
+            }
+        }
         
         // Render all SMART attributes from JSON object
         let attrsHtml = '';
@@ -603,11 +874,14 @@ def get_html_template() -> str:
         }
         
         // Add trend if available
-        if (data.trends[d.serial]?.delta > 0) {
-            attrsHtml += `<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+${data.trends[d.serial].delta} sectors</span></div>`;
+        if (data.trends[diskId]?.delta > 0) {
+            attrsHtml += `<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+${data.trends[diskId].delta} sectors</span></div>`;
         }
         
-        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${d.serial}')">
+        // WWN detail line (if available)
+        const wwnHtml = d.wwn ? `<div class="detail-item"><span class="label">WWN</span><span class="value">${d.wwn}</span></div>` : '';
+        
+        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${eid}')">
             <td><span class="device-name">${d.device}</span><span class="type-badge ${typeClass}">${d.type}</span></td>
             <td>${d.model || '-'}</td>
             <td class="mono muted">${d.serial}</td>
@@ -617,18 +891,19 @@ def get_html_template() -> str:
             <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
             <td>${issues || '-'}</td>
         </tr>
-        <tr class="detail-row" id="detail-${d.serial}">
+        <tr class="detail-row" id="detail-${eid}">
             <td colspan="8">
                 <div class="detail-grid">
                     <div class="detail-item"><span class="label">Serial</span><span class="value">${d.serial}</span></div>
+                    ${wwnHtml}
                     ${attrsHtml}
                 </div>
             </td>
         </tr>`;
     }
     
-    function toggleDetail(serial) {
-        document.getElementById('detail-' + serial)?.classList.toggle('visible');
+    function toggleDetail(eid) {
+        document.getElementById('detail-' + eid)?.classList.toggle('visible');
     }
     
     function filterStatus(s) {
@@ -730,6 +1005,89 @@ def get_html_template() -> str:
         localStorage.setItem('theme', isDark ? 'light' : 'dark');
     }
     
+    // --- Settings Panel ---
+    let settingsData = null;
+    
+    function toggleSettings() {
+        const overlay = document.getElementById('settingsOverlay');
+        if (overlay.style.display === 'none') {
+            overlay.style.display = 'flex';
+            loadSettings();
+        } else {
+            overlay.style.display = 'none';
+        }
+    }
+    
+    async function loadSettings() {
+        try {
+            const res = await fetch('/api/settings');
+            settingsData = await res.json();
+            renderPresets();
+        } catch (e) {
+            document.getElementById('presetList').textContent = 'Failed to load settings.';
+        }
+    }
+    
+    function renderPresets() {
+        if (!settingsData) return;
+        const container = document.getElementById('presetList');
+        container.innerHTML = '';
+        for (const p of settingsData.presets) {
+            const div = document.createElement('div');
+            div.className = 'preset-option' + (p.active ? ' active' : '');
+            div.onclick = () => setPreset(p.name);
+            div.innerHTML = `<div class="preset-radio"></div><div class="preset-info"><div class="preset-name">${p.name}</div><div class="preset-desc">${p.description}</div></div>`;
+            container.appendChild(div);
+        }
+        renderPresetDetail();
+    }
+    
+    function renderPresetDetail() {
+        const detail = document.getElementById('presetDetail');
+        if (!settingsData || !settingsData.thresholds) { detail.innerHTML = ''; return; }
+        const t = settingsData.thresholds;
+        let html = '<div class="preset-detail-title">Active thresholds</div>';
+        
+        for (const [diskType, rules] of Object.entries(t)) {
+            if (diskType.startsWith('_')) continue;
+            html += `<div class="preset-detail-group">${diskType.toUpperCase()}</div><table>`;
+            html += '<tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr>';
+            
+            // Collect all attribute names across warning and critical
+            const allAttrs = new Set();
+            for (const name of Object.keys(rules.warning || {})) { if (!name.startsWith('_')) allAttrs.add(name); }
+            for (const name of Object.keys(rules.critical || {})) { if (!name.startsWith('_')) allAttrs.add(name); }
+            
+            for (const attr of allAttrs) {
+                const w = (rules.warning || {})[attr];
+                const c = (rules.critical || {})[attr];
+                const wText = w ? `<span class="level-w">${w.op} ${w.value}</span>` : '-';
+                const cText = c ? `<span class="level-c">${c.op} ${c.value}</span>` : '-';
+                const displayName = attr.replace(/_/g, ' ');
+                html += `<tr><td>${displayName}</td><td>${wText}</td><td>${cText}</td></tr>`;
+            }
+            html += '</table>';
+        }
+        detail.innerHTML = html;
+    }
+    
+    async function setPreset(name) {
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({threshold_preset: name})
+            });
+            const result = await res.json();
+            if (result.success) {
+                await loadSettings();
+                loadData(); // Re-classify all disks with new thresholds
+            }
+        } catch (e) {
+            console.error('Failed to save settings:', e);
+        }
+    }
+    
     // Init
     if (localStorage.getItem('theme') === 'dark') {
         document.body.setAttribute('data-theme', 'dark');
@@ -786,18 +1144,9 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 stats = get_stats(readings)
                 hosts = list(set(r['host'] for r in readings))
                 
-                # Add status and parse smart_attributes JSON
+                # Classify and parse smart_attributes
                 for r in readings:
-                    if r.get('smart_status') not in ('PASSED', 'N/A', None):
-                        r['status'] = 'critical'
-                    elif (r.get('reallocated_sectors') or 0) > 0 or \
-                         (r.get('pending_sectors') or 0) > 0 or \
-                         (r.get('offline_uncorrectable') or 0) > 0:
-                        r['status'] = 'warning'
-                    else:
-                        r['status'] = 'ok'
-                    
-                    # Parse JSON string to dict
+                    # Parse JSON string to dict first (needed by classify_disk)
                     if r.get('smart_attributes'):
                         try:
                             r['smart_attributes'] = json.loads(r['smart_attributes'])
@@ -805,12 +1154,17 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                             r['smart_attributes'] = {}
                     else:
                         r['smart_attributes'] = {}
+                    
+                    r['status'] = classify_disk(r)
+                    r['issues'] = get_disk_issues(r)
                 
+                # Also send thresholds to frontend for client-side awareness
                 self.send_json({
                     'disks': readings,
                     'hosts': sorted(hosts),
                     'stats': stats,
                     'trends': trends,
+                    'thresholds': get_thresholds(),
                 })
             
             elif path == '/api/hosts':
@@ -821,6 +1175,26 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 readings = get_current_readings(self.db_path)
                 stats = get_stats(readings)
                 self.send_json(stats)
+            
+            elif path == '/api/settings':
+                config = load_config()
+                presets = load_all_presets()
+                preset_name = config.get('threshold_preset', DEFAULT_PRESET)
+                
+                # Build preset summary for frontend
+                preset_list = []
+                for name, preset in presets.items():
+                    preset_list.append({
+                        'name': name,
+                        'description': preset.get('_description', ''),
+                        'active': name == preset_name,
+                    })
+                
+                self.send_json({
+                    'active_preset': preset_name,
+                    'presets': preset_list,
+                    'thresholds': get_thresholds(),
+                })
             
             else:
                 self.send_response(404)
@@ -836,7 +1210,42 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
         path = parsed.path
         
         try:
-            if path == '/api/collect':
+            # Read request body
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b''
+            
+            if path == '/api/settings':
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                
+                preset_name = data.get('threshold_preset')
+                if not preset_name:
+                    self.send_json({'error': 'Missing threshold_preset'}, 400)
+                    return
+                
+                # Validate preset exists
+                presets = load_all_presets()
+                if preset_name not in presets:
+                    self.send_json({'error': f'Unknown preset: {preset_name}'}, 400)
+                    return
+                
+                # Save to config
+                config = load_config()
+                config['threshold_preset'] = preset_name
+                save_config(config)
+                
+                # Invalidate cache so next request uses new thresholds
+                invalidate_threshold_cache()
+                
+                self.send_json({
+                    'success': True,
+                    'active_preset': preset_name,
+                })
+            
+            elif path == '/api/collect':
                 # Trigger data collection
                 if self.fetch_script:
                     result = subprocess.run(

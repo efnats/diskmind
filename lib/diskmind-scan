@@ -3,7 +3,7 @@
 # Outputs SMART data as CSV to stdout
 
 # CSV Header
-echo "serial,device,type,model,capacity_bytes,smart_status,smart_attributes"
+echo "wwn,serial,device,type,model,capacity_bytes,smart_status,smart_attributes"
 
 # Find all block devices (whole disks only, not partitions)
 for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1; do
@@ -19,6 +19,15 @@ for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1
     # Extract basic info
     serial=$(echo "$info" | grep -i "serial number" | cut -d: -f2 | xargs)
     model=$(echo "$info" | grep -iE "device model|model number|product" | head -1 | cut -d: -f2 | xargs | tr ',' ' ')
+    
+    # Extract WWN (World Wide Name) - globally unique disk identifier
+    # ATA/SATA: "LU WWN Device Id: 5 0014ee 156557a28" → "50014ee156557a28"
+    # NVMe: "IEEE EUI-64: 002538 ..." or "NGUID: ..."
+    wwn=""
+    wwn_raw=$(echo "$info" | grep -iE "LU WWN Device Id|IEEE EUI-64|NGUID" | head -1 | cut -d: -f2-)
+    if [ -n "$wwn_raw" ]; then
+        wwn=$(echo "$wwn_raw" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+    fi
     
     # Capacity - try multiple patterns (SATA: "User Capacity", NVMe: "Total NVM Capacity" or "Namespace 1 Size")
     capacity=$(echo "$info" | grep -iE "user capacity|total nvm capacity|namespace 1 size" | head -1 | grep -oE '[0-9,]+' | head -1 | tr -d ',')
@@ -90,7 +99,7 @@ for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1
     json_escaped=$(echo "$json" | sed 's/"/""/g')
     
     # Output CSV row
-    printf '%s,%s,%s,%s,%s,%s,"%s"\n' \
-        "$serial" "$dev" "$type" "$model" \
+    printf '%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
+        "$wwn" "$serial" "$dev" "$type" "$model" \
         "${capacity:-0}" "$status" "$json_escaped"
 done

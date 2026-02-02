@@ -99,6 +99,80 @@ def get_trends(db_path: str, days: int = 30) -> dict:
     return trends
 
 
+def get_disk_history(db_path: str, disk_id: str = None, days: int = 30) -> dict:
+    """Get historical attribute values for sparkline rendering.
+    Returns {disk_id: {attr_name: [{timestamp, value}, ...], ...}, ...}
+    """
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+
+    if disk_id:
+        cursor.execute('''
+            SELECT disk_id, timestamp, smart_attributes, type
+            FROM readings
+            WHERE disk_id = ? AND timestamp > datetime('now', ?)
+            ORDER BY timestamp
+        ''', (disk_id, f'-{days} days'))
+    else:
+        cursor.execute('''
+            SELECT disk_id, timestamp, smart_attributes, type
+            FROM readings
+            WHERE timestamp > datetime('now', ?)
+            ORDER BY disk_id, timestamp
+        ''', (f'-{days} days',))
+
+    history = {}
+    for row in cursor.fetchall():
+        did = row['disk_id']
+        if did not in history:
+            history[did] = {'_type': row['type'], '_timestamps': []}
+
+        ts = row['timestamp']
+        history[did]['_timestamps'].append(ts)
+
+        attrs = row['smart_attributes']
+        if isinstance(attrs, str):
+            try:
+                attrs = json.loads(attrs)
+            except:
+                attrs = {}
+
+        for attr_name, value in attrs.items():
+            if attr_name not in history[did]:
+                history[did][attr_name] = []
+            try:
+                history[did][attr_name].append({'t': ts, 'v': float(value)})
+            except (ValueError, TypeError):
+                pass
+
+    conn.close()
+
+    # Compute per-attribute summary: current, delta, points array
+    result = {}
+    for did, attr_data in history.items():
+        disk_type = attr_data.pop('_type', None)
+        timestamps = attr_data.pop('_timestamps', [])
+        result[did] = {
+            '_type': disk_type,
+            '_readings': len(set(timestamps)),
+            '_first': timestamps[0] if timestamps else None,
+            '_last': timestamps[-1] if timestamps else None,
+        }
+        for attr_name, points in attr_data.items():
+            if len(points) < 1:
+                continue
+            values = [p['v'] for p in points]
+            result[did][attr_name] = {
+                'points': values,
+                'current': values[-1],
+                'delta': values[-1] - values[0] if len(values) >= 2 else 0,
+                'min': min(values),
+                'max': max(values),
+            }
+
+    return result
+
+
 def get_hosts(db_path: str) -> list[str]:
     """Get list of all hosts."""
     conn = get_db_connection(db_path)
@@ -107,6 +181,27 @@ def get_hosts(db_path: str) -> list[str]:
     hosts = [row['host'] for row in cursor.fetchall()]
     conn.close()
     return hosts
+
+
+def get_host_stats(db_path: str) -> dict:
+    """Get per-host last scan time and disk count."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT host,
+               MAX(timestamp) as last_seen,
+               COUNT(DISTINCT serial) as disk_count
+        FROM readings
+        GROUP BY host
+    ''')
+    stats = {}
+    for row in cursor.fetchall():
+        stats[row['host']] = {
+            'last_seen': row['last_seen'],
+            'disk_count': row['disk_count'],
+        }
+    conn.close()
+    return stats
 
 
 def get_stats(readings: list[dict]) -> dict:
@@ -144,9 +239,10 @@ def get_stats(readings: list[dict]) -> dict:
 DEFAULT_PRESET = 'backblaze'
 
 def _find_thresholds_file() -> Path | None:
-    """Locate lib/thresholds.json."""
+    """Locate config/thresholds.json."""
     base_dir = Path(__file__).parent.parent
     candidates = [
+        base_dir / 'config' / 'thresholds.json',
         base_dir / 'lib' / 'thresholds.json',
         base_dir / 'thresholds.json',
         Path(__file__).parent / 'thresholds.json',
@@ -157,31 +253,172 @@ def _find_thresholds_file() -> Path | None:
     return None
 
 
+def _parse_simple_yaml(text: str) -> dict:
+    """Parse simple YAML (flat keys, string values, simple lists). No PyYAML needed."""
+    result = {}
+    current_key = None
+    current_list = None
+    for raw_line in text.split('\n'):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if indent > 0 and current_key and stripped.startswith('- '):
+            val = stripped[2:].strip()
+            if current_list is None:
+                current_list = []
+                result[current_key] = current_list
+            current_list.append(val)
+        elif indent > 0 and current_key and ':' in stripped:
+            k, _, v = stripped.partition(':')
+            v = v.strip()
+            if not isinstance(result.get(current_key), dict):
+                result[current_key] = {}
+            if v:
+                try:
+                    result[current_key][k.strip()] = int(v)
+                except ValueError:
+                    result[current_key][k.strip()] = v
+        elif ':' in stripped and indent == 0:
+            k, _, v = stripped.partition(':')
+            k = k.strip()
+            v = v.strip()
+            current_key = k
+            current_list = None
+            if v:
+                try:
+                    result[k] = int(v)
+                except ValueError:
+                    result[k] = v
+    return result
+
+
 def _get_config_path() -> Path:
-    """Get path to data/config.json (next to the database)."""
-    # Use the same data/ directory as the database
+    """Get path to config/config.yaml."""
     base_dir = Path(__file__).parent.parent
-    return base_dir / 'data' / 'config.json'
+    return base_dir / 'config' / 'config.yaml'
 
 
 def load_config() -> dict:
-    """Load user config from data/config.json."""
+    """Load user config from config/config.yaml."""
     config_path = _get_config_path()
     if config_path.exists():
         try:
             with open(config_path) as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
+                return _parse_simple_yaml(f.read())
+        except IOError:
             pass
     return {}
 
 
-def save_config(config: dict):
-    """Save user config to data/config.json."""
+def save_config_value(key: str, value: str):
+    """Update a single top-level key in config/config.yaml, preserving comments."""
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(config_path, 'w') as f:
-        json.dump(config, f, indent=2)
+    
+    if config_path.exists():
+        lines = config_path.read_text().splitlines()
+    else:
+        lines = []
+    
+    # Find and replace existing key, or append
+    found = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('#'):
+            continue
+        if ':' in stripped:
+            k, _, _ = stripped.partition(':')
+            if k.strip() == key:
+                lines[i] = f'{key}: {value}'
+                found = True
+                break
+    if not found:
+        lines.append(f'{key}: {value}')
+    
+    config_path.write_text('\n'.join(lines) + '\n')
+
+
+def save_config_list(key: str, items: list):
+    """Update a top-level list key in config/config.yaml, preserving comments."""
+    config_path = _get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if config_path.exists():
+        lines = config_path.read_text().splitlines()
+    else:
+        lines = []
+    
+    # Find key, remove old list items, insert new ones
+    key_idx = None
+    remove_end = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('#'):
+            continue
+        if key_idx is not None:
+            # We're inside the list — consume indented lines
+            indent = len(line) - len(line.lstrip())
+            if indent > 0 and (stripped.startswith('- ') or stripped.startswith('#')):
+                remove_end = i + 1
+            else:
+                break
+        elif ':' in stripped:
+            k, _, _ = stripped.partition(':')
+            if k.strip() == key:
+                key_idx = i
+                remove_end = i + 1
+    
+    new_lines = [f'  - {item}' for item in items]
+    
+    if key_idx is not None:
+        lines[key_idx:remove_end] = [f'{key}:'] + new_lines
+    else:
+        lines.append(f'{key}:')
+        lines.extend(new_lines)
+    
+    config_path.write_text('\n'.join(lines) + '\n')
+
+
+def save_config_subkey(section: str, key: str, value):
+    """Update a nested key (e.g. ssh.user) in config/config.yaml."""
+    config_path = _get_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    if config_path.exists():
+        lines = config_path.read_text().splitlines()
+    else:
+        lines = []
+    
+    section_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('#'):
+            continue
+        if section_idx is not None:
+            indent = len(line) - len(line.lstrip())
+            if indent > 0 and ':' in stripped:
+                k, _, _ = stripped.partition(':')
+                if k.strip() == key:
+                    lines[i] = f'  {key}: {value}'
+                    config_path.write_text('\n'.join(lines) + '\n')
+                    return
+            elif indent == 0 and stripped:
+                # Past the section, insert before this line
+                lines.insert(i, f'  {key}: {value}')
+                config_path.write_text('\n'.join(lines) + '\n')
+                return
+        elif ':' in stripped:
+            k, _, _ = stripped.partition(':')
+            if k.strip() == section:
+                section_idx = i
+    
+    # Key not found; append to section or create section
+    if section_idx is not None:
+        lines.append(f'  {key}: {value}')
+    else:
+        lines.extend([f'{section}:', f'  {key}: {value}'])
+    config_path.write_text('\n'.join(lines) + '\n')
 
 
 def load_all_presets() -> dict:
@@ -283,9 +520,10 @@ def classify_disk(r: dict) -> str:
     
     thresholds = get_thresholds()
     disk_type = (r.get('type') or '').strip()
+    is_nvme = disk_type == 'NVMe'
     
     # Select threshold set: NVMe uses 'nvme', everything else uses 'ata'
-    if disk_type == 'NVMe':
+    if is_nvme:
         rules = thresholds.get('nvme', {})
     else:
         rules = thresholds.get('ata', {})
@@ -295,18 +533,46 @@ def classify_disk(r: dict) -> str:
         if attr_name.startswith('_'):
             continue
         val = attrs.get(attr_name)
-        if val is not None and check_threshold(val, rule):
-            return 'critical'
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
+            if check_threshold(check_val, rule):
+                return 'critical'
     
     # Check warning thresholds
     for attr_name, rule in rules.get('warning', {}).items():
         if attr_name.startswith('_'):
             continue
         val = attrs.get(attr_name)
-        if val is not None and check_threshold(val, rule):
-            return 'warning'
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
+            if check_threshold(check_val, rule):
+                return 'warning'
     
     return 'ok'
+
+
+def decode_seagate_value(attr_name: str, raw_value) -> int:
+    """Decode Seagate composite 48-bit raw values.
+    
+    Seagate packs multiple counters into raw values:
+    - Command_Timeout (#188): low 16 bits = actual timeout count
+    - Raw_Read_Error_Rate (#1): high 16 bits = error count
+    - Seek_Error_Rate (#7): high 16 bits = error count
+    """
+    try:
+        raw = int(raw_value)
+    except (ValueError, TypeError):
+        return 0
+    
+    if raw <= 65535:  # Not a composite value
+        return raw
+    
+    if attr_name == 'Command_Timeout':
+        return raw & 0xFFFF
+    elif attr_name in ('Raw_Read_Error_Rate', 'Seek_Error_Rate'):
+        return (raw >> 32) & 0xFFFF
+    
+    return raw
 
 
 def get_disk_issues(r: dict) -> list[dict]:
@@ -337,9 +603,11 @@ def get_disk_issues(r: dict) -> list[dict]:
         if attr_name.startswith('_'):
             continue
         val = attrs.get(attr_name)
-        if val is not None and check_threshold(val, rule):
-            display = rule.get('display', attr_name)
-            issues.append({'level': 'critical', 'text': f'{val} {display}'})
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+            if check_threshold(check_val, rule):
+                display = rule.get('display', attr_name)
+                issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
     
     # Check warning thresholds (skip if already critical for same attribute)
     critical_attrs = set(rules.get('critical', {}).keys())
@@ -349,12 +617,16 @@ def get_disk_issues(r: dict) -> list[dict]:
         # Skip if already flagged as critical
         if attr_name in critical_attrs:
             val = attrs.get(attr_name)
-            if val is not None and check_threshold(val, rules['critical'][attr_name]):
-                continue
+            if val is not None:
+                check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+                if check_threshold(check_val, rules['critical'][attr_name]):
+                    continue
         val = attrs.get(attr_name)
-        if val is not None and check_threshold(val, rule):
-            display = rule.get('display', attr_name)
-            issues.append({'level': 'warning', 'text': f'{val} {display}'})
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+            if check_threshold(check_val, rule):
+                display = rule.get('display', attr_name)
+                issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
     
     return issues
 
@@ -609,11 +881,48 @@ def get_html_template() -> str:
         
         .detail-row { display: none; }
         .detail-row.visible { display: table-row; }
-        .detail-row td { padding: 16px 20px; background: var(--bg-hover); }
-        .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
-        .detail-item { display: flex; justify-content: space-between; padding: 6px 10px; background: var(--bg-card); border-radius: 4px; font-size: 12px; }
-        .detail-item .label { color: var(--text-muted); }
-        .detail-item .value { font-weight: 500; font-family: monospace; }
+        .detail-row td { padding: 0; background: var(--bg-hover); }
+        .detail-panel { display: flex; border-top: 1px solid var(--border); }
+
+        .detail-sidebar { min-width: 170px; max-width: 200px; padding: 14px 18px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px; background: var(--bg-hover); flex-shrink: 0; }
+        .sidebar-item { display: flex; flex-direction: column; gap: 1px; }
+        .sb-label { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+        .sb-value { font-family: monospace; font-size: 13px; font-weight: 500; color: var(--text-primary); word-break: break-all; }
+        .sb-sub { font-size: 10px; color: var(--text-muted); }
+
+        .detail-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+        .attr-section-header { display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); background: var(--bg-hover); }
+        .attr-section-title { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+        .show-all-btn { font-size: 11px; color: var(--accent); cursor: pointer; border: none; background: none; font-family: inherit; font-weight: 500; padding: 2px 0; }
+        .show-all-btn:hover { text-decoration: underline; }
+
+        .attr-table { width: 100%; border-collapse: collapse; }
+        .attr-table th { text-align: left; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); padding: 5px 14px; border-bottom: 1px solid var(--border); background: var(--bg-hover); }
+        .attr-table th.right { text-align: right; }
+        .attr-table td { padding: 5px 14px; font-size: 12px; border-bottom: 1px solid rgba(128,128,128,0.08); vertical-align: middle; }
+        .attr-table tr:last-child td { border-bottom: none; }
+        .attr-name { color: var(--text-primary); font-weight: 500; }
+        .attr-name[data-tip], .attr-value[data-tip] { border-bottom: 1px dotted var(--text-muted); cursor: help; position: relative; }
+        .attr-name[data-tip]:hover::after, .attr-value[data-tip]:hover::after { content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 8px 11px; font-size: 11px; font-weight: 400; line-height: 1.5; width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.12); pointer-events: none; white-space: normal; }
+        .attr-value[data-tip] { border-bottom-style: none; }
+        .attr-value[data-tip]:hover::after { left: auto; right: 0; width: auto; white-space: nowrap; }
+        .attr-id { color: var(--text-muted); font-size: 10px; margin-left: 5px; }
+        .attr-value { font-family: monospace; font-size: 12px; font-weight: 500; text-align: right; }
+        .attr-value.val-ok { color: var(--text-primary); }
+        .attr-value.val-warning { color: var(--warning); }
+        .attr-value.val-danger { color: var(--danger); }
+        .attr-delta { font-family: monospace; font-size: 11px; text-align: right; color: var(--text-muted); }
+        .attr-delta.delta-up { color: var(--warning); }
+        .attr-delta.delta-danger { color: var(--danger); }
+        .spark-cell { width: 110px; padding: 3px 10px 3px 4px; }
+        .spark-cell svg { width: 100px; height: 24px; display: block; }
+        .attr-status { width: 24px; text-align: center; font-size: 11px; }
+        .secondary-attrs { display: none; }
+        .secondary-attrs.visible { display: table-row-group; }
+
+        .detail-footer { padding: 5px 14px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-muted); background: var(--bg-hover); }
+        .detail-footer span { font-family: monospace; color: var(--text-secondary); }
         
         .footer { margin-top: 24px; text-align: center; font-size: 11px; color: var(--text-muted); }
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
@@ -638,6 +947,25 @@ def get_html_template() -> str:
         [data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(200,200,200,0.35); }
         .settings-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; color: #555; }
         .settings-section-hint { font-size: 12px; color: #777; margin: 0 0 10px 0; }
+        .hosts-editor { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+        .host-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #ffffff; border: 1px solid #d5d9e0; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .host-row .host-addr { flex: 1; }
+        .host-row .host-remove { width: 22px; height: 22px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; background: transparent; color: #999; }
+        .host-row .host-remove:hover { background: #fee2e2; color: #dc2626; }
+        .host-meta { font-size: 11px; color: #888; font-family: inherit; white-space: nowrap; }
+        .host-status { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+        .host-new { background: #e0f2fe; color: #0284c7; }
+        [data-theme="dark"] .host-meta { color: #64748b; }
+        [data-theme="dark"] .host-new { background: #0c4a6e; color: #7dd3fc; }
+        .hosts-actions { display: flex; gap: 6px; margin-bottom: 4px; }
+        .host-input { flex: 1; padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; background: #ffffff; color: #1a1a2e; outline: none; }
+        .host-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+        .host-add-btn { padding: 6px 14px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-size: 12px; font-weight: 600; cursor: pointer; }
+        .host-add-btn:hover { background: #2563eb; }
+        [data-theme="dark"] .host-row { background: #1a2538; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .host-row .host-remove:hover { background: #7f1d1d; color: #fca5a5; }
+        [data-theme="dark"] .host-input { background: #1a2538; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .host-input:focus { border-color: #3b82f6; }
         .preset-list { display: flex; flex-direction: column; gap: 6px; }
         .preset-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; cursor: pointer; transition: background 0.12s; background: #ffffff; border: 1px solid #d5d9e0; }
         .preset-option:hover { background: #e8edf3; }
@@ -703,7 +1031,18 @@ def get_html_template() -> str:
                     <button class="settings-close" onclick="toggleSettings()">✕</button>
                 </div>
                 <div class="settings-body">
-                    <div class="settings-section-title">Threshold Preset</div>
+                    <div class="settings-section-title">Hosts</div>
+                    <p class="settings-section-hint">Hosts to collect SMART data from via SSH.</p>
+                    <div id="hostsList" class="hosts-editor">Loading...</div>
+                    <div class="hosts-actions">
+                        <input type="text" id="hostInput" class="host-input" placeholder="IP or hostname" onkeydown="if(event.key==='Enter'){addHost();event.preventDefault()}">
+                        <button class="host-add-btn" onclick="addHost()">Add</button>
+                    </div>
+                    <div class="settings-section-title" style="margin-top:16px">SSH User</div>
+                    <p class="settings-section-hint">User for SSH connections to remote hosts.</p>
+                    <input type="text" id="sshUserInput" class="host-input" style="width:160px" onchange="saveSshUser()">
+                    
+                    <div class="settings-section-title" style="margin-top:16px">Threshold Preset</div>
                     <p class="settings-section-hint">Affects dashboard status and future notifications.</p>
                     <div id="presetList" class="preset-list">Loading...</div>
                     <div id="presetDetail" class="preset-detail"></div>
@@ -717,7 +1056,7 @@ def get_html_template() -> str:
                 <div class="stat-value" id="statTotal">-</div>
                 <div class="stat-sub" id="statCapacity">-</div>
             </div>
-            <div class="stat healthy" onclick="filterStatus('healthy')">
+            <div class="stat healthy" onclick="filterStatus('ok')">
                 <div class="stat-label">Healthy</div>
                 <div class="stat-value" id="statHealthy">-</div>
                 <div class="stat-sub">No Issues</div>
@@ -753,14 +1092,330 @@ def get_html_template() -> str:
     </div>
     
     <script>
-    let data = { disks: [], hosts: [], stats: {}, trends: {} };
+    let data = { disks: [], hosts: [], stats: {}, trends: {}, thresholds: {} };
+    let historyCache = {};
     let statusFilter = '';
-    
+
+    // Health-relevant attributes by type (order matters - shown first)
+    // Attribute descriptions for tooltips
+    const ATTR_TIPS = {
+        // ATA health
+        'Reallocated_Sector_Ct': 'Number of defective sectors moved to a reserved spare area. A slowly rising count is normal aging; rapid growth suggests surface degradation.',
+        'Reported_Uncorrect': 'Read or write errors that the error correction could not fix. Occasional errors can occur; a growing count points to media problems.',
+        'Command_Timeout': 'Operations the drive failed to complete in time. Often caused by cable, power supply, or controller issues rather than the drive itself.',
+        'Current_Pending_Sector': 'Sectors flagged as suspicious, waiting to be tested on the next write. May resolve on their own or become reallocated.',
+        'Offline_Uncorrectable': 'Bad sectors found during background scans that could not be repaired or remapped. Indicates permanent media damage at those locations.',
+        'Temperature_Celsius': 'Current drive temperature in \u00b0C. Most drives are rated for continuous operation up to 55-60\u00b0C.',
+        'Airflow_Temperature_Cel': 'Current drive temperature in \u00b0C. Most drives are rated for continuous operation up to 55-60\u00b0C.',
+        // ATA secondary
+        'Raw_Read_Error_Rate': 'Rate of hardware read errors. On Seagate drives this is a composite value where the large raw number is normal and not an error count.',
+        'Spin_Up_Time': 'Time in milliseconds for the platters to reach operating speed. Increases can indicate motor or bearing wear.',
+        'Start_Stop_Count': 'Number of spindle start/stop cycles. Drives are typically rated for 50,000 or more cycles.',
+        'Seek_Error_Rate': 'Rate of positioning errors when the head moves to a track. On Seagate drives this is a composite value; the large raw number is normal.',
+        'Spin_Retry_Count': 'Number of times the drive needed more than one attempt to spin up. Non-zero values can point to power supply or motor issues.',
+        'Power_Off_Retract_Count': 'Times the heads retracted due to power loss rather than a clean shutdown. Normal for drives that experience occasional outages.',
+        'Load_Cycle_Count': 'Number of head load/unload cycles. Drives are typically rated for 300,000-600,000 cycles over their lifetime.',
+        'UDMA_CRC_Error_Count': 'Data transfer errors between drive and controller, usually caused by a damaged or loose SATA cable.',
+        'Multi_Zone_Error_Rate': 'Rate of errors when writing data across multiple zones. Can indicate problems with the write head or media surface.',
+        'Head_Flying_Hours': 'Total time the read/write heads have been positioned over the platters. Similar to power-on hours but excludes idle/parked time.',
+        'Total_LBAs_Written': 'Total logical block addresses written. Multiply by 512 bytes for approximate total data written to the drive.',
+        'Total_LBAs_Read': 'Total logical block addresses read. Multiply by 512 bytes for approximate total data read from the drive.',
+        'Power_On_Hours': 'Total accumulated hours the drive has been powered on.',
+        'Power_Cycle_Count': 'Number of full power on/off cycles. Frequent cycling can stress components more than continuous operation.',
+        'End-to-End_Error': 'Errors detected in the data path between the drive cache and the host interface. Should normally be zero.',
+        'Runtime_Bad_Block': 'Bad blocks found during normal operation. Similar to reallocated sectors but tracked separately by some vendors.',
+        'High_Fly_Writes': 'Write operations where the head was further from the platter surface than intended. Can lead to weak writes.',
+        'G-Sense_Error_Rate': 'Shock and vibration events detected by the built-in accelerometer. Common in portable or poorly mounted drives.',
+        'Hardware_ECC_Recovered': 'Number of errors corrected by hardware error correction. A rising count is normal as the drive ages.',
+        // NVMe health
+        'Percentage_Used': 'Vendor estimate of life consumed based on actual writes vs. rated endurance (TBW). Reaching 100% means the rated lifespan is used up, though many drives continue to work beyond that.',
+        'Available_Spare': 'Percentage of reserved spare flash blocks still available for wear leveling. Starts at 100% and decreases over the lifetime of the drive.',
+        'Available_Spare_Threshold': 'Vendor-defined minimum for available spare blocks. When Available Spare drops below this value, the drive raises a warning.',
+        'Critical_Warning': 'Hardware-level warning flags reported by the NVMe controller. A value of 0 means no warnings are active.',
+        'Media_and_Data_Integrity_Errors': 'Count of unrecovered data errors from the flash media. A value of 0 is expected; any increase means cells are failing.',
+        'Error_Information_Log_Entries': 'Total number of error events logged by the drive. Some entries are normal over time; a sudden jump can indicate a new issue.',
+        'Temperature': 'Current drive temperature in \u00b0C. NVMe drives typically throttle performance above 70\u00b0C to protect themselves.',
+        'Unsafe_Shutdowns': 'Number of times the drive lost power without a clean shutdown command. Does not directly indicate damage, but high counts increase the risk of metadata issues.',
+        // NVMe secondary
+        'Data_Units_Read': 'Total data read in 512-byte units x1000. Divide by ~2 million to approximate terabytes read.',
+        'Data_Units_Written': 'Total data written in 512-byte units x1000. Divide by ~2 million to approximate terabytes written.',
+        'Host_Read_Commands': 'Total number of read commands issued by the host system.',
+        'Host_Write_Commands': 'Total number of write commands issued by the host system.',
+        'Controller_Busy_Time': 'Total time in minutes that the controller was busy handling I/O commands.',
+        'Warning_Comp._Temperature_Time': 'Total minutes the drive spent above its warning temperature threshold.',
+        'Critical_Comp._Temperature_Time': 'Total minutes the drive spent above its critical temperature threshold. Any non-zero value means the drive was at risk of damage.',
+        'Temperature_Sensor_1': 'Reading from the first on-board temperature sensor, typically near the controller.',
+        'Temperature_Sensor_2': 'Reading from the second on-board temperature sensor, typically near the NAND flash.',
+        'Thermal_Temp._1_Transition_Count': 'Number of times the drive crossed into thermal throttling state 1 to manage heat.',
+        'Thermal_Temp._1_Total_Time': 'Total time spent in thermal throttling state 1.',
+    };
+
+    const HEALTH_ATTRS = {
+        ata: [
+            {key: 'Reallocated_Sector_Ct', id: 5, label: 'Reallocated Sector Ct'},
+            {key: 'Reported_Uncorrect', id: 187, label: 'Reported Uncorrect'},
+            {key: 'Command_Timeout', id: 188, label: 'Command Timeout'},
+            {key: 'Current_Pending_Sector', id: 197, label: 'Current Pending Sector'},
+            {key: 'Offline_Uncorrectable', id: 198, label: 'Offline Uncorrectable'},
+            {key: 'Temperature_Celsius', id: 194, label: 'Temperature'},
+        ],
+        nvme: [
+            {key: 'Percentage_Used', label: 'Percentage Used'},
+            {key: 'Available_Spare', label: 'Available Spare'},
+            {key: 'Critical_Warning', label: 'Critical Warning'},
+            {key: 'Media_and_Data_Integrity_Errors', label: 'Media & Data Integrity Errors'},
+            {key: 'Error_Information_Log_Entries', label: 'Error Log Entries'},
+            {key: 'Temperature', label: 'Temperature'},
+        ]
+    };
+    // Alternate temperature key for ATA
+    const TEMP_KEYS = ['Temperature_Celsius', 'Airflow_Temperature_Cel', 'Temperature'];
+
+    // Key metrics shown in the top strip
+    const KEY_METRIC_ATTRS = ['Power_On_Hours', 'Power_Cycle_Count', 'Power_Cycles'];
+
+    function getTemp(attrs) {
+        for (const k of TEMP_KEYS) { if (attrs[k] != null) return attrs[k]; }
+        return null;
+    }
+
+    function fmtHours(h) {
+        if (!h) return '-';
+        h = parseInt(h);
+        if (h >= 1000) return (h / 1000).toFixed(1) + 'k';
+        return String(h);
+    }
+
+    function fmtDuration(h) {
+        if (!h) return '';
+        h = parseInt(h);
+        const days = Math.round(h / 24);
+        if (days >= 365) {
+            const years = (days / 365).toFixed(1);
+            return years + (years === '1.0' ? ' year' : ' years');
+        }
+        if (days >= 30) {
+            const months = Math.round(days / 30.44);
+            return months + (months === 1 ? ' month' : ' months');
+        }
+        if (days >= 7) {
+            const weeks = Math.round(days / 7);
+            return weeks + (weeks === 1 ? ' week' : ' weeks');
+        }
+        return days + (days === 1 ? ' day' : ' days');
+    }
+
+    function fmtBytes(bytes) {
+        if (!bytes || bytes <= 0) return '0 B';
+        const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        const val = bytes / Math.pow(1024, i);
+        return val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2) + ' ' + units[i];
+    }
+
+    // Keys that should be displayed as human-readable byte values
+    const LBA_KEYS = new Set(['Total_LBAs_Written', 'Total_LBAs_Read']);
+    const DATA_UNIT_KEYS = new Set(['Data_Units_Read', 'Data_Units_Written']);
+
+    // SVG sparkline generator
+    function sparkSVG(points, color, opts = {}) {
+        if (!points || points.length < 2) {
+            // Flat dashed line for no data or single point
+            const y = 20;
+            return `<svg viewBox="0 0 100 24" preserveAspectRatio="none"><line x1="0" y1="${y}" x2="100" y2="${y}" stroke="currentColor" stroke-width="1" stroke-dasharray="3,3" opacity="0.25"/></svg>`;
+        }
+        const w = 100, h = 24, pad = 2;
+        let min = Math.min(...points), max = Math.max(...points);
+        if (min === max) { min -= 1; max += 1; } // avoid div by zero
+        const range = max - min;
+        const coords = points.map((v, i) => {
+            const x = (i / (points.length - 1)) * w;
+            const y = pad + (1 - (v - min) / range) * (h - 2 * pad);
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+        });
+        const line = coords.join(' L');
+        const fill = coords.join(' L') + ` L${w},${h} L0,${h} Z`;
+        const fillColor = color === '#f59e0b' ? 'rgba(245,158,11,0.12)' :
+                          color === '#ef4444' ? 'rgba(239,68,68,0.12)' :
+                          color === '#10b981' ? 'rgba(16,185,129,0.08)' :
+                          'rgba(59,130,246,0.08)';
+        return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+            <path d="M${fill}" fill="${fillColor}"/>
+            <path d="M${line}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>
+        </svg>`;
+    }
+
+    // Seagate composite value decoder
+    // Seagate packs multiple counters into 48-bit raw values:
+    // - Command_Timeout (#188): [5-4]=cmds>7.5s, [3-2]=cmds>5s, [1-0]=actual timeouts
+    // - Raw_Read_Error_Rate (#1): [5-4]=error count, [3-0]=total operations
+    // - Seek_Error_Rate (#7): [5-4]=error count, [3-0]=total seeks
+    const SEAGATE_COMPOSITE_ATTRS = {
+        'Command_Timeout': { extract: 'low16' },       // actual timeouts in low 16 bits
+        'Raw_Read_Error_Rate': { extract: 'high16' },   // errors in high 16 bits
+        'Seek_Error_Rate': { extract: 'high16' },       // errors in high 16 bits
+    };
+
+    function isSeagateComposite(attrKey, rawValue) {
+        if (!SEAGATE_COMPOSITE_ATTRS[attrKey]) return false;
+        // Composite values are >65535 (more than 16 bits used)
+        return parseInt(rawValue) > 65535;
+    }
+
+    function decodeSeagateValue(attrKey, rawValue) {
+        const raw = parseInt(rawValue);
+        if (!isSeagateComposite(attrKey, rawValue)) return raw;
+        const spec = SEAGATE_COMPOSITE_ATTRS[attrKey];
+        if (spec.extract === 'low16') return raw & 0xFFFF;
+        if (spec.extract === 'high16') return (raw >> 32) & 0xFFFF;
+        return raw;
+    }
+
+    function getAttrColor(attrKey, value, diskType) {
+        // Decode Seagate composites before threshold check
+        const checkVal = (diskType !== 'NVMe') ? decodeSeagateValue(attrKey, value) : value;
+        // Check against current thresholds
+        const th = data.thresholds || {};
+        const ruleSet = diskType === 'NVMe' ? (th.nvme || {}) : (th.ata || {});
+        for (const [attr, rule] of Object.entries(ruleSet.critical || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return '#ef4444';
+        }
+        for (const [attr, rule] of Object.entries(ruleSet.warning || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return '#f59e0b';
+        }
+        // Temperature: always blue sparkline
+        if (TEMP_KEYS.includes(attrKey) || attrKey === 'Temperature') return '#3b82f6';
+        return '#3b82f6';
+    }
+
+    function checkThreshold(val, rule) {
+        const v = parseFloat(val), t = rule.value;
+        if (isNaN(v)) return false;
+        if (rule.op === '>') return v > t;
+        if (rule.op === '>=') return v >= t;
+        if (rule.op === '<') return v < t;
+        if (rule.op === '<=') return v <= t;
+        if (rule.op === '==') return v === t;
+        return false;
+    }
+
+    function getValClass(attrKey, value, diskType) {
+        const checkVal = (diskType !== 'NVMe') ? decodeSeagateValue(attrKey, value) : value;
+        const th = data.thresholds || {};
+        const ruleSet = diskType === 'NVMe' ? (th.nvme || {}) : (th.ata || {});
+        for (const [attr, rule] of Object.entries(ruleSet.critical || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return 'val-danger';
+        }
+        for (const [attr, rule] of Object.entries(ruleSet.warning || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return 'val-warning';
+        }
+        return 'val-ok';
+    }
+
+    function getValTip(attrKey, value, diskType, composite) {
+        const checkVal = (diskType !== 'NVMe') ? decodeSeagateValue(attrKey, value) : value;
+        const th = data.thresholds || {};
+        const ruleSet = diskType === 'NVMe' ? (th.nvme || {}) : (th.ata || {});
+        let level = '', rule = null;
+        for (const [attr, r] of Object.entries(ruleSet.critical || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, r)) { level = 'Critical'; rule = r; break; }
+        }
+        if (!level) {
+            for (const [attr, r] of Object.entries(ruleSet.warning || {})) {
+                if (attr === attrKey && checkThreshold(checkVal, r)) { level = 'Warning'; rule = r; break; }
+            }
+        }
+        if (!level) return '';
+        const opLabel = rule.op === '>' ? 'above' : rule.op === '>=' ? 'at or above' : rule.op === '<' ? 'below' : rule.op === '<=' ? 'at or below' : '';
+        let tip = `${level}: ${checkVal} is ${opLabel} ${rule.value}`;
+        if (composite) tip += ` (decoded from raw ${value})`;
+        return tip;
+    }
+
+    function getStatusIcon(attrKey, value, diskType) {
+        const checkVal = (diskType !== 'NVMe') ? decodeSeagateValue(attrKey, value) : value;
+        const th = data.thresholds || {};
+        const ruleSet = diskType === 'NVMe' ? (th.nvme || {}) : (th.ata || {});
+        for (const [attr, rule] of Object.entries(ruleSet.critical || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return '<span style="color:var(--danger)">✕</span>';
+        }
+        for (const [attr, rule] of Object.entries(ruleSet.warning || {})) {
+            if (attr === attrKey && checkThreshold(checkVal, rule)) return '<span style="color:var(--warning)">⚠</span>';
+        }
+        // Only show checkmark for health-monitored attributes
+        const healthKeys = [...(HEALTH_ATTRS.ata || []), ...(HEALTH_ATTRS.nvme || [])].map(a => a.key);
+        if (healthKeys.includes(attrKey) && !TEMP_KEYS.includes(attrKey) && attrKey !== 'Temperature') {
+            return '<span style="color:var(--success)">✓</span>';
+        }
+        return '';
+    }
+
+    function renderAttrRow(attrDef, attrs, hist, diskType, showId) {
+        const key = attrDef.key;
+        let val = attrs[key];
+        // Temperature fallback
+        if (val == null && TEMP_KEYS.includes(key)) {
+            for (const tk of TEMP_KEYS) { if (attrs[tk] != null) { val = attrs[tk]; break; } }
+        }
+        if (val == null) val = 0;
+
+        // Decode Seagate composite values for display and threshold checks
+        let displayVal = val;
+        let composite = false;
+        if (diskType !== 'NVMe' && isSeagateComposite(key, val)) {
+            displayVal = decodeSeagateValue(key, val);
+            composite = true;
+        }
+
+        const h = hist ? hist[key] : null;
+        const delta = h ? h.delta : 0;
+        const points = h ? h.points : null;
+        const color = getAttrColor(key, val, diskType);
+        const valClass = getValClass(key, val, diskType);
+        const statusIcon = getStatusIcon(key, val, diskType);
+        const valTip = getValTip(key, val, diskType, composite);
+        const idStr = showId && attrDef.id ? `<span class="attr-id">#${attrDef.id}</span>` : '';
+
+        let deltaStr = '—';
+        let deltaClass = '';
+        if (delta > 0) { deltaStr = `+${delta} ↑`; deltaClass = 'delta-up'; }
+        else if (delta < 0) { deltaStr = `${delta} ↓`; deltaClass = ''; }
+
+        // Suffix for special attrs
+        let suffix = '';
+        if (key === 'Percentage_Used' || key === 'Available_Spare') suffix = '%';
+        if (TEMP_KEYS.includes(key) || key === 'Temperature') suffix = '°C';
+
+        // Value tooltip: threshold explanation, with composite decode info if applicable
+        const valTipAttr = valTip ? ` data-tip="${valTip}"` : '';
+
+        const tip = ATTR_TIPS[key] || '';
+        const tipAttr = tip ? ` data-tip="${tip}"` : '';
+
+        return `<tr>
+            <td><span class="attr-name"${tipAttr}>${attrDef.label}</span>${idStr}</td>
+            <td class="attr-value ${valClass}"${valTipAttr}>${displayVal}${suffix}</td>
+            <td class="attr-delta ${deltaClass}">${deltaStr}</td>
+            <td class="spark-cell">${sparkSVG(points, color)}</td>
+            <td class="attr-status">${statusIcon}</td>
+        </tr>`;
+    }
+
+    async function loadHistory() {
+        try {
+            const resp = await fetch('/api/history');
+            if (resp.ok) historyCache = await resp.json();
+        } catch (e) { console.warn('History load failed:', e); }
+    }
+
     async function loadData() {
         try {
-            const response = await fetch('/api/disks');
-            if (!response.ok) throw new Error('Failed to load data');
-            data = await response.json();
+            const [diskResp] = await Promise.all([
+                fetch('/api/disks'),
+                Object.keys(historyCache).length === 0 ? loadHistory() : Promise.resolve(),
+            ]);
+            if (!diskResp.ok) throw new Error('Failed to load data');
+            data = await diskResp.json();
             renderData();
             document.getElementById('error').style.display = 'none';
         } catch (e) {
@@ -769,7 +1424,16 @@ def get_html_template() -> str:
         }
     }
     
+    // Refresh history periodically
+    setInterval(loadHistory, 120000);
+    
     function renderData() {
+        // Save expanded detail rows and secondary sections before re-render
+        const expandedDetails = new Set();
+        const expandedSections = new Set();
+        document.querySelectorAll('.detail-row.visible').forEach(el => expandedDetails.add(el.id));
+        document.querySelectorAll('.secondary-attrs.visible').forEach(el => expandedSections.add(el.id));
+
         // Update stats
         document.getElementById('statCritical').textContent = data.stats.critical || 0;
         document.getElementById('statWarning').textContent = data.stats.warning || 0;
@@ -799,6 +1463,20 @@ def get_html_template() -> str:
             const warning = disks.filter(d => d.status === 'warning').length;
             const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
             
+            // Find most recent scan timestamp for this host
+            let lastScan = '';
+            const timestamps = disks.map(d => d.timestamp).filter(Boolean).sort();
+            if (timestamps.length > 0) {
+                const ts = timestamps[timestamps.length - 1];
+                const d = new Date(ts.replace(' ', 'T') + 'Z');
+                const now = new Date();
+                const sec = Math.floor((now - d) / 1000);
+                if (sec < 60) lastScan = 'just now';
+                else if (sec < 3600) lastScan = Math.floor(sec / 60) + 'm ago';
+                else if (sec < 86400) lastScan = Math.floor(sec / 3600) + 'h ago';
+                else lastScan = Math.floor(sec / 86400) + 'd ago';
+            }
+            
             let badge = '<span class="host-badge ok">OK</span>';
             if (critical > 0) badge = `<span class="host-badge critical">${critical} critical</span>`;
             else if (warning > 0) badge = `<span class="host-badge warning">${warning} warning</span>`;
@@ -806,7 +1484,7 @@ def get_html_template() -> str:
             html += `<div class="host-group" data-host="${host}">
                 <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
                     <div><span class="host-name">${host}</span>${badge}</div>
-                    <div class="host-stats">${disks.length} drives · ${capacityTB} TB <span class="host-toggle">▼</span></div>
+                    <div class="host-stats">${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''} <span class="host-toggle">▼</span></div>
                 </div>
                 <div class="host-content">
                     <table class="disk-table">
@@ -827,6 +1505,17 @@ def get_html_template() -> str:
         }
         
         document.getElementById('content').innerHTML = html || '<div class="loading">No data available</div>';
+
+        // Restore expanded state
+        expandedDetails.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('visible');
+        });
+        expandedSections.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('visible');
+        });
+
         applyFilters();
     }
     
@@ -836,51 +1525,105 @@ def get_html_template() -> str:
         const capacity = d.capacity_bytes >= 1e12 ? (d.capacity_bytes / 1e12).toFixed(1) + 'TB' : (d.capacity_bytes / 1e9).toFixed(0) + 'GB';
         const diskId = d.disk_id || d.serial;
         const eid = diskId.replace(/[\"' ]/g, '_');
-        const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
-        
-        // Get values from smart_attributes JSON
         const attrs = d.smart_attributes || {};
-        
-        // Find hours - try multiple possible names
+        const hist = historyCache[diskId] || {};
+
+        // Hours & temp for main table row
         let hours = parseInt(attrs.Power_On_Hours || attrs.Power_On_Hours_and_Msec || 0);
-        const hoursFmt = hours >= 1000 ? (hours / 1000).toFixed(1) + 'k' : (hours || '-');
-        
-        // Find temperature - try multiple possible names
-        let temp = attrs.Temperature_Celsius || attrs.Airflow_Temperature_Cel || attrs.Temperature || '';
-        // Extract just the number if it contains extra info like "31/53"
-        if (temp && typeof temp === 'string') {
-            const match = temp.match(/^\\d+/);
-            temp = match ? match[0] : temp;
-        }
-        temp = temp || '-';
-        
-        // Get problem indicators from server-side threshold analysis
+        const hoursFmt = fmtHours(hours);
+        let temp = getTemp(attrs);
+        temp = temp != null ? temp : '-';
+        const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
+
+        // Issues
         let issues = '';
         if (d.issues && d.issues.length > 0) {
             for (const issue of d.issues) {
                 issues += `<span class="issue ${issue.level}">${issue.text}</span>`;
             }
         }
-        
-        // Render all SMART attributes from JSON object
-        let attrsHtml = '';
-        if (attrs && typeof attrs === 'object' && Object.keys(attrs).length > 0) {
-            for (const [name, value] of Object.entries(attrs)) {
-                const displayName = name.replace(/_/g, ' ');
-                attrsHtml += `<div class="detail-item"><span class="label">${displayName}</span><span class="value">${value}</span></div>`;
+
+        // Determine health attrs for this disk type
+        const diskType = d.type || 'HDD';
+        const isNVMe = diskType === 'NVMe';
+        const healthDefs = isNVMe ? HEALTH_ATTRS.nvme : HEALTH_ATTRS.ata;
+        const healthKeys = new Set(healthDefs.map(a => a.key));
+        TEMP_KEYS.forEach(k => healthKeys.add(k));
+
+        // Sidebar
+        const firmware = d.firmware || attrs.Firmware_Version || '';
+        const powerCycles = attrs.Power_Cycle_Count || attrs.Power_Cycles || '-';
+        const rpm = d.rpm;
+        const sectorSize = d.sector_size;
+        let sbHtml = '';
+        if (d.wwn) sbHtml += `<div class="sidebar-item"><div class="sb-label">WWN</div><div class="sb-value">${d.wwn}</div></div>`;
+        if (firmware) sbHtml += `<div class="sidebar-item"><div class="sb-label">Firmware</div><div class="sb-value">${firmware}</div></div>`;
+        sbHtml += `<div class="sidebar-item"><div class="sb-label">Power Cycles</div><div class="sb-value">${powerCycles}</div></div>`;
+        sbHtml += `<div class="sidebar-item"><div class="sb-label">Power On</div><div class="sb-value">${hours.toLocaleString()}h</div><div class="sb-sub">${fmtDuration(hours)}</div></div>`;
+        if (rpm != null && !isNVMe) sbHtml += `<div class="sidebar-item"><div class="sb-label">RPM</div><div class="sb-value">${rpm > 0 ? rpm.toLocaleString() : 'SSD'}</div></div>`;
+        if (sectorSize) sbHtml += `<div class="sidebar-item"><div class="sb-label">Sector Size</div><div class="sb-value">${sectorSize}B</div></div>`;
+
+        // History footer info
+        const hMeta = hist || {};
+        const nReadings = hMeta._readings || 0;
+        const first = hMeta._first || '';
+        const last = hMeta._last || '';
+        let spanText = '';
+        if (first && last && first !== last) {
+            const d1 = new Date(first), d2 = new Date(last);
+            const diffDays = Math.round((d2 - d1) / 86400000);
+            spanText = diffDays > 0 ? `${nReadings} readings · ${diffDays}d` : `${nReadings} readings`;
+        } else if (nReadings) {
+            spanText = `${nReadings} readings`;
+        }
+        if (spanText) sbHtml += `<div class="sidebar-item"><div class="sb-label">History</div><div class="sb-sub">${spanText}</div></div>`;
+
+        // Health attribute rows
+        let healthRows = '';
+        for (const attrDef of healthDefs) {
+            healthRows += renderAttrRow(attrDef, attrs, hist, diskType, !isNVMe);
+        }
+
+        // Secondary attributes
+        const skipKeys = new Set([...healthKeys, ...KEY_METRIC_ATTRS, 'Firmware_Version']);
+        const secondaryAttrs = Object.keys(attrs).filter(k => !skipKeys.has(k));
+        let secondaryRows = '';
+        for (const key of secondaryAttrs) {
+            const val = attrs[key];
+            const h = hist[key] || null;
+            const delta = h ? h.delta : 0;
+            const points = h ? h.points : null;
+            let deltaStr = '\u2014';
+            if (delta > 0) { deltaStr = `+${delta}`; }
+            else if (delta < 0) { deltaStr = `${delta}`; }
+            const label = key.replace(/_/g, ' ');
+            const tip = ATTR_TIPS[key] || '';
+            const tipAttr = tip ? ` data-tip="${tip}"` : '';
+            // Format LBA/Data Unit values as human-readable bytes
+            let displayVal = val;
+            let valTitle = '';
+            const numVal = parseInt(val);
+            if (LBA_KEYS.has(key) && !isNaN(numVal) && numVal > 0) {
+                const bytes = numVal * 512;
+                displayVal = fmtBytes(bytes);
+                valTitle = ` data-tip="${numVal.toLocaleString()} sectors"`;
+            } else if (DATA_UNIT_KEYS.has(key) && !isNaN(numVal) && numVal > 0) {
+                const bytes = numVal * 512000;
+                displayVal = fmtBytes(bytes);
+                valTitle = ` data-tip="${numVal.toLocaleString()} units"`;
             }
-        } else {
-            attrsHtml = '<div class="detail-item"><span class="label">No SMART data</span><span class="value">-</span></div>';
+            secondaryRows += `<tr>
+                <td><span class="attr-name"${tipAttr}>${label}</span></td>
+                <td class="attr-value val-ok"${valTitle}>${displayVal}</td>
+                <td class="attr-delta">${deltaStr}</td>
+                <td class="spark-cell">${points ? sparkSVG(points, '#3b82f6') : ''}</td>
+                <td class="attr-status"></td>
+            </tr>`;
         }
-        
-        // Add trend if available
-        if (data.trends[diskId]?.delta > 0) {
-            attrsHtml += `<div class="detail-item"><span class="label">30d Trend</span><span class="value" style="color:var(--warning)">+${data.trends[diskId].delta} sectors</span></div>`;
-        }
-        
-        // WWN detail line (if available)
-        const wwnHtml = d.wwn ? `<div class="detail-item"><span class="label">WWN</span><span class="value">${d.wwn}</span></div>` : '';
-        
+
+        const secId = 'sec-' + eid;
+        const totalAttrs = healthDefs.length + secondaryAttrs.length;
+
         return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${eid}')">
             <td><span class="device-name">${d.device}</span><span class="type-badge ${typeClass}">${d.type}</span></td>
             <td>${d.model || '-'}</td>
@@ -893,17 +1636,43 @@ def get_html_template() -> str:
         </tr>
         <tr class="detail-row" id="detail-${eid}">
             <td colspan="8">
-                <div class="detail-grid">
-                    <div class="detail-item"><span class="label">Serial</span><span class="value">${d.serial}</span></div>
-                    ${wwnHtml}
-                    ${attrsHtml}
+                <div class="detail-panel">
+                    <div class="detail-sidebar">${sbHtml}</div>
+                    <div class="detail-main">
+                        <div class="attr-section-header">
+                            <div class="attr-section-title">Health & Endurance</div>
+                            ${secondaryAttrs.length > 0 ? `<button class="show-all-btn" id="btn-${secId}" onclick="event.stopPropagation(); let el=document.getElementById('${secId}'); el.classList.toggle('visible'); this.textContent=el.classList.contains('visible')?'Show less':'Show all ${totalAttrs} attributes';">Show all ${totalAttrs} attributes</button>` : ''}
+                        </div>
+                        <div class="detail-main-body" onclick="event.stopPropagation(); if(event.target.closest('.show-all-btn,.attr-name[data-tip],.attr-value[data-tip]'))return; let btn=document.getElementById('btn-${secId}'); if(btn) btn.click();" style="cursor:pointer;">
+                        <table class="attr-table">
+                            <thead><tr>
+                                <th style="width:38%">Attribute</th>
+                                <th class="right" style="width:12%">Value</th>
+                                <th class="right" style="width:10%">\u0394</th>
+                                <th style="width:25%">Trend</th>
+                                <th style="width:5%"></th>
+                            </tr></thead>
+                            <tbody>${healthRows}</tbody>
+                            ${secondaryAttrs.length > 0 ? `<tbody id="${secId}" class="secondary-attrs">${secondaryRows}</tbody>` : ''}
+                        </table>
+                        </div>
+                        ${spanText ? `<div class="detail-footer">Last scan: <span>${last}</span></div>` : ''}
+                    </div>
                 </div>
             </td>
         </tr>`;
     }
     
     function toggleDetail(eid) {
-        document.getElementById('detail-' + eid)?.classList.toggle('visible');
+        const target = document.getElementById('detail-' + eid);
+        if (!target) return;
+        const diskRow = target.previousElementSibling;
+        const rowTop = diskRow.getBoundingClientRect().top;
+        const isOpen = target.classList.contains('visible');
+        document.querySelectorAll('.detail-row.visible').forEach(el => el.classList.remove('visible'));
+        if (!isOpen) target.classList.add('visible');
+        const newTop = diskRow.getBoundingClientRect().top;
+        window.scrollBy(0, newTop - rowTop);
     }
     
     function filterStatus(s) {
@@ -1023,9 +1792,94 @@ def get_html_template() -> str:
             const res = await fetch('/api/settings');
             settingsData = await res.json();
             renderPresets();
+            renderHosts();
+            document.getElementById('sshUserInput').value = settingsData.ssh_user || 'root';
         } catch (e) {
             document.getElementById('presetList').textContent = 'Failed to load settings.';
         }
+    }
+    
+    function renderHosts() {
+        const container = document.getElementById('hostsList');
+        const hosts = settingsData.hosts || [];
+        const stats = settingsData.host_stats || {};
+        if (hosts.length === 0) {
+            container.innerHTML = '<div style="font-size:12px;color:#999;padding:4px 0">No hosts configured</div>';
+            return;
+        }
+        container.innerHTML = hosts.map((h, i) => {
+            const s = stats[h];
+            let info = '<span class="host-status host-new">new</span>';
+            if (s) {
+                const ago = timeAgo(s.last_seen);
+                info = `<span class="host-meta">${s.disk_count} disk${s.disk_count !== 1 ? 's' : ''} · ${ago}</span>`;
+            }
+            return `<div class="host-row"><span class="host-addr">${h}</span>${info}<button class="host-remove" onclick="removeHost(${i})" title="Remove">✕</button></div>`;
+        }).join('');
+    }
+    
+    function timeAgo(ts) {
+        const d = new Date(ts.replace(' ', 'T') + 'Z');
+        const now = new Date();
+        const sec = Math.floor((now - d) / 1000);
+        if (sec < 60) return 'just now';
+        const min = Math.floor(sec / 60);
+        if (min < 60) return min + 'm ago';
+        const hr = Math.floor(min / 60);
+        if (hr < 24) return hr + 'h ago';
+        const days = Math.floor(hr / 24);
+        return days + 'd ago';
+    }
+    
+    async function addHost() {
+        const input = document.getElementById('hostInput');
+        const host = input.value.trim();
+        if (!host) return;
+        const hosts = [...(settingsData.hosts || [])];
+        if (hosts.includes(host)) { input.value = ''; return; }
+        hosts.push(host);
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hosts})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.hosts = result.hosts || hosts;
+                renderHosts();
+                input.value = '';
+            }
+        } catch (e) { console.error('Failed to add host:', e); }
+    }
+    
+    async function removeHost(idx) {
+        const hosts = [...(settingsData.hosts || [])];
+        hosts.splice(idx, 1);
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hosts})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.hosts = result.hosts || hosts;
+                renderHosts();
+            }
+        } catch (e) { console.error('Failed to remove host:', e); }
+    }
+    
+    async function saveSshUser() {
+        const val = document.getElementById('sshUserInput').value.trim();
+        if (!val) return;
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ssh_user: val})
+            });
+        } catch (e) { console.error('Failed to save SSH user:', e); }
     }
     
     function renderPresets() {
@@ -1194,7 +2048,17 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'active_preset': preset_name,
                     'presets': preset_list,
                     'thresholds': get_thresholds(),
+                    'hosts': config.get('hosts', []),
+                    'ssh_user': config.get('ssh', {}).get('user', 'root'),
+                    'host_stats': get_host_stats(self.db_path),
                 })
+
+            elif path == '/api/history':
+                params = parse_qs(parsed.query)
+                disk_id = params.get('disk_id', [None])[0]
+                days = int(params.get('days', [30])[0])
+                history = get_disk_history(self.db_path, disk_id, days)
+                self.send_json(history)
             
             else:
                 self.send_response(404)
@@ -1221,29 +2085,35 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'Invalid JSON'}, 400)
                     return
                 
+                result = {}
+                
+                # Handle threshold preset change
                 preset_name = data.get('threshold_preset')
-                if not preset_name:
-                    self.send_json({'error': 'Missing threshold_preset'}, 400)
-                    return
+                if preset_name:
+                    presets = load_all_presets()
+                    if preset_name not in presets:
+                        self.send_json({'error': f'Unknown preset: {preset_name}'}, 400)
+                        return
+                    save_config_value('threshold_preset', preset_name)
+                    invalidate_threshold_cache()
+                    result['active_preset'] = preset_name
                 
-                # Validate preset exists
-                presets = load_all_presets()
-                if preset_name not in presets:
-                    self.send_json({'error': f'Unknown preset: {preset_name}'}, 400)
-                    return
+                # Handle hosts change
+                hosts = data.get('hosts')
+                if hosts is not None:
+                    # Validate: list of non-empty strings
+                    hosts = [h.strip() for h in hosts if h.strip()]
+                    save_config_list('hosts', hosts)
+                    result['hosts'] = hosts
                 
-                # Save to config
-                config = load_config()
-                config['threshold_preset'] = preset_name
-                save_config(config)
+                # Handle ssh_user change
+                ssh_user = data.get('ssh_user')
+                if ssh_user is not None:
+                    save_config_subkey('ssh', 'user', ssh_user.strip())
+                    result['ssh_user'] = ssh_user.strip()
                 
-                # Invalidate cache so next request uses new thresholds
-                invalidate_threshold_cache()
-                
-                self.send_json({
-                    'success': True,
-                    'active_preset': preset_name,
-                })
+                result['success'] = True
+                self.send_json(result)
             
             elif path == '/api/collect':
                 # Trigger data collection
@@ -1278,7 +2148,7 @@ def main():
     parser.add_argument('-p', '--port', type=int, default=8080, help='Port (default: 8080)')
     parser.add_argument('--host', default='0.0.0.0', help='Host (default: 0.0.0.0)')
     parser.add_argument('--db', default='./data/smart.db', help='Database path')
-    parser.add_argument('-c', '--config', default='config.yaml', help='Config file')
+    parser.add_argument('-c', '--config', default='config/config.yaml', help='Config file')
     parser.add_argument('-o', '--output', help='Generate static HTML file and exit')
     
     args = parser.parse_args()

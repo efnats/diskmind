@@ -14,13 +14,51 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import yaml
+
+def _parse_simple_yaml(text: str) -> dict:
+    """Parse simple YAML (flat keys, string values, simple lists). No PyYAML needed."""
+    result = {}
+    current_key = None
+    current_list = None
+    for raw_line in text.split('\n'):
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if indent > 0 and current_key and stripped.startswith('- '):
+            val = stripped[2:].strip()
+            if current_list is None:
+                current_list = []
+                result[current_key] = current_list
+            current_list.append(val)
+        elif indent > 0 and current_key and ':' in stripped:
+            k, _, v = stripped.partition(':')
+            v = v.strip()
+            if not isinstance(result.get(current_key), dict):
+                result[current_key] = {}
+            if v:
+                try:
+                    result[current_key][k.strip()] = int(v)
+                except ValueError:
+                    result[current_key][k.strip()] = v
+        elif ':' in stripped and indent == 0:
+            k, _, v = stripped.partition(':')
+            k = k.strip()
+            v = v.strip()
+            current_key = k
+            current_list = None
+            if v:
+                try:
+                    result[k] = int(v)
+                except ValueError:
+                    result[k] = v
+    return result
 
 
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        config = _parse_simple_yaml(f.read())
     
     # Load hosts from file if specified
     if 'hosts_file' in config:
@@ -49,6 +87,9 @@ def init_database(db_path: str) -> sqlite3.Connection:
             type TEXT,
             model TEXT,
             capacity_bytes INTEGER,
+            firmware TEXT,
+            rpm INTEGER,
+            sector_size INTEGER,
             smart_status TEXT,
             smart_attributes TEXT,
             PRIMARY KEY (disk_id, timestamp)
@@ -88,6 +129,17 @@ def init_database(db_path: str) -> sqlite3.Connection:
             CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
             CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
         ''')
+        print("  Migration complete.")
+    
+    # Migrate to v1.2 schema (add firmware, rpm, sector_size)
+    if 'firmware' not in columns and 'disk_id' in columns:
+        print("  Migrating database to v1.2 schema (adding firmware, rpm, sector_size)...")
+        for col, coltype in [('firmware', 'TEXT'), ('rpm', 'INTEGER'), ('sector_size', 'INTEGER')]:
+            try:
+                conn.execute(f'ALTER TABLE readings ADD COLUMN {col} {coltype}')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        conn.commit()
         print("  Migration complete.")
     
     return conn
@@ -193,8 +245,9 @@ def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: st
             cursor.execute('''
                 INSERT OR REPLACE INTO readings 
                 (disk_id, wwn, serial, timestamp, host, device, type, model,
-                 capacity_bytes, smart_status, smart_attributes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 capacity_bytes, firmware, rpm, sector_size,
+                 smart_status, smart_attributes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 disk_id,
                 wwn or None,
@@ -205,6 +258,9 @@ def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: st
                 r.get('type'),
                 r.get('model'),
                 int(r.get('capacity_bytes') or 0),
+                r.get('firmware') or None,
+                int(r.get('rpm') or 0) or None,
+                int(r.get('sector_size') or 0) or None,
                 r.get('smart_status'),
                 r.get('smart_attributes', '{}'),
             ))
@@ -235,8 +291,8 @@ def main():
     )
     parser.add_argument(
         '-c', '--config',
-        default='config.yaml',
-        help='Path to config file (default: config.yaml)'
+        default='config/config.yaml',
+        help='Path to config file (default: config/config.yaml)'
     )
     parser.add_argument(
         '--hosts',

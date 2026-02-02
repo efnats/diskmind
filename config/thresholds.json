@@ -1,5 +1,5 @@
 {
-  "_comment": "Disk health threshold presets. Active preset is selected in data/config.json.",
+  "_comment": "Disk health threshold presets. Active preset is selected in config/config.yaml.",
   "_source": "https://www.backblaze.com/blog/what-smart-stats-indicate-hard-drive-failures/",
 
   "presets": {

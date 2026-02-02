@@ -1,0 +1,16 @@
+# diskmind configuration
+
+hosts:
+  - 192.168.1.1
+  # - 192.168.1.2
+
+ssh:
+  user: root
+  timeout: 30
+
+database:
+  path: ./data/smart.db
+  retention_days: 365
+
+# Threshold preset: backblaze, conservative, relaxed
+threshold_preset: backblaze

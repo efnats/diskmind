@@ -3,7 +3,7 @@
 # Outputs SMART data as CSV to stdout
 
 # CSV Header
-echo "wwn,serial,device,type,model,capacity_bytes,smart_status,smart_attributes"
+echo "wwn,serial,device,type,model,capacity_bytes,firmware,rpm,sector_size,smart_status,smart_attributes"
 
 # Find all block devices (whole disks only, not partitions)
 for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1; do
@@ -31,6 +31,22 @@ for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1
     
     # Capacity - try multiple patterns (SATA: "User Capacity", NVMe: "Total NVM Capacity" or "Namespace 1 Size")
     capacity=$(echo "$info" | grep -iE "user capacity|total nvm capacity|namespace 1 size" | head -1 | grep -oE '[0-9,]+' | head -1 | tr -d ',')
+    
+    # Firmware version
+    firmware=$(echo "$info" | grep -iE "firmware version" | head -1 | cut -d: -f2 | xargs)
+    
+    # Rotation rate: extract RPM number, or "0" for SSD/NVMe
+    rpm_raw=$(echo "$info" | grep -iE "rotation rate" | head -1 | cut -d: -f2 | xargs)
+    if echo "$rpm_raw" | grep -qiE "solid state|not rotational"; then
+        rpm="0"
+    else
+        rpm=$(echo "$rpm_raw" | grep -oE '[0-9]+' | head -1)
+        [ -z "$rpm" ] && rpm=""
+    fi
+    
+    # Sector size: logical bytes (e.g. "512 bytes logical/physical" → "512")
+    sector_size=$(echo "$info" | grep -iE "sector size" | head -1 | grep -oE '[0-9]+' | head -1)
+    [ -z "$sector_size" ] && sector_size=""
     
     # Detect type
     if echo "$info" | grep -qi "nvme"; then
@@ -99,7 +115,8 @@ for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1
     json_escaped=$(echo "$json" | sed 's/"/""/g')
     
     # Output CSV row
-    printf '%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
         "$wwn" "$serial" "$dev" "$type" "$model" \
-        "${capacity:-0}" "$status" "$json_escaped"
+        "${capacity:-0}" "$firmware" "${rpm}" "${sector_size}" \
+        "$status" "$json_escaped"
 done

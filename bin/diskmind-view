@@ -34,6 +34,17 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
     return conn
 
 
+# Delta preset mappings (preset name -> days)
+DELTA_PRESETS = {
+    '1h': 1/24,
+    '24h': 1,
+    '7d': 7,
+    '30d': 30,
+    '90d': 90,
+    'all': 36500,
+}
+
+
 def get_current_readings(db_path: str) -> list[dict]:
     """Get most recent reading for each disk."""
     conn = get_db_connection(db_path)
@@ -435,9 +446,18 @@ def load_all_presets() -> dict:
 
 
 def load_thresholds() -> dict:
-    """Load active thresholds: config preset selection → resolve from presets."""
+    """Load active thresholds: config preset selection → resolve from presets or custom."""
     config = load_config()
     preset_name = config.get('threshold_preset', DEFAULT_PRESET)
+    
+    # If custom preset, load from config
+    if preset_name == 'custom':
+        custom = config.get('custom_thresholds')
+        if custom:
+            return {
+                'ata': custom.get('ata', {}),
+                'nvme': custom.get('nvme', {}),
+            }
     
     presets = load_all_presets()
     
@@ -465,6 +485,39 @@ def load_thresholds() -> dict:
         }
     
     return {}
+
+
+def save_custom_thresholds(thresholds: dict):
+    """Save custom thresholds to config.yaml."""
+    config_path = get_config_path()
+    try:
+        with open(config_path, 'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        lines = []
+    
+    # Remove existing custom_thresholds section if present
+    new_lines = []
+    skip_until_unindent = False
+    for line in lines:
+        if line.startswith('custom_thresholds:'):
+            skip_until_unindent = True
+            continue
+        if skip_until_unindent:
+            if line.startswith(' ') or line.startswith('\t') or line.strip() == '':
+                continue
+            else:
+                skip_until_unindent = False
+        new_lines.append(line)
+    
+    # Add custom_thresholds as YAML
+    import yaml
+    custom_yaml = yaml.dump({'custom_thresholds': thresholds}, default_flow_style=False)
+    new_lines.append('\n')
+    new_lines.append(custom_yaml)
+    
+    with open(config_path, 'w') as f:
+        f.writelines(new_lines)
 
 
 # Cache thresholds at module level (invalidated on settings change)
@@ -504,51 +557,43 @@ def check_threshold(attr_value, rule: dict) -> bool:
     return False
 
 
-def classify_disk(r: dict) -> str:
-    """Classify disk status using Backblaze/NVMe thresholds."""
-    # SMART self-test failure is always critical
-    if r.get('smart_status') not in ('PASSED', 'N/A', None):
-        return 'critical'
+def classify_disk(r: dict, history: dict = None, delta_days: float = None) -> str:
+    """Classify disk status based on visible issues (respecting delta filter)."""
+    issues = get_disk_issues(r, history, delta_days)
     
-    # Parse smart_attributes if string
-    attrs = r.get('smart_attributes', {})
-    if isinstance(attrs, str):
-        try:
-            attrs = json.loads(attrs)
-        except:
-            attrs = {}
-    
-    thresholds = get_thresholds()
-    disk_type = (r.get('type') or '').strip()
-    is_nvme = disk_type == 'NVMe'
-    
-    # Select threshold set: NVMe uses 'nvme', everything else uses 'ata'
-    if is_nvme:
-        rules = thresholds.get('nvme', {})
-    else:
-        rules = thresholds.get('ata', {})
-    
-    # Check critical thresholds first
-    for attr_name, rule in rules.get('critical', {}).items():
-        if attr_name.startswith('_'):
-            continue
-        val = attrs.get(attr_name)
-        if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
-            if check_threshold(check_val, rule):
-                return 'critical'
-    
-    # Check warning thresholds
-    for attr_name, rule in rules.get('warning', {}).items():
-        if attr_name.startswith('_'):
-            continue
-        val = attrs.get(attr_name)
-        if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
-            if check_threshold(check_val, rule):
-                return 'warning'
+    # Status is determined by the filtered issues
+    for issue in issues:
+        if issue['level'] == 'critical':
+            return 'critical'
+    for issue in issues:
+        if issue['level'] == 'warning':
+            return 'warning'
     
     return 'ok'
+
+
+# Cumulative event counters - only show if delta > 0 in selected time range
+# These are counters that accumulate over time; old values aren't necessarily concerning
+CUMULATIVE_EVENT_ATTRS = {
+    'Command_Timeout',
+    'Reported_Uncorrect',
+    'UDMA_CRC_Error_Count',
+    'Unsafe_Shutdowns',
+    'Error_Information_Log_Entries',
+    'Power_Off_Retract_Count',
+}
+
+# Critical state attributes - always show regardless of delta
+# These represent current state or irreversible damage
+CRITICAL_STATE_ATTRS = {
+    'Reallocated_Sector_Ct',
+    'Current_Pending_Sector',
+    'Offline_Uncorrectable',
+    'Media_and_Data_Integrity_Errors',
+    'Critical_Warning',
+    'Percentage_Used',
+    'Available_Spare',
+}
 
 
 def decode_seagate_value(attr_name: str, raw_value) -> int:
@@ -575,8 +620,19 @@ def decode_seagate_value(attr_name: str, raw_value) -> int:
     return raw
 
 
-def get_disk_issues(r: dict) -> list[dict]:
-    """Get list of threshold violations for a disk."""
+def get_disk_issues(r: dict, history: dict = None, delta_days: float = None) -> list[dict]:
+    """Get list of threshold violations for a disk, filtered by delta time range.
+    
+    Args:
+        r: Disk reading dict
+        history: History data for this disk (with deltas)
+        delta_days: Time range in days (None or >= 36500 means all time)
+    
+    Returns:
+        List of issues that should be shown based on:
+        - Critical state attrs: always shown if threshold exceeded
+        - Cumulative counters: only shown if delta > 0 in time range
+    """
     attrs = r.get('smart_attributes', {})
     if isinstance(attrs, str):
         try:
@@ -586,17 +642,41 @@ def get_disk_issues(r: dict) -> list[dict]:
     
     thresholds = get_thresholds()
     disk_type = (r.get('type') or '').strip()
+    is_nvme = disk_type == 'NVMe'
     
-    if disk_type == 'NVMe':
+    if is_nvme:
         rules = thresholds.get('nvme', {})
     else:
         rules = thresholds.get('ata', {})
     
     issues = []
+    all_time = delta_days is None or delta_days >= 36500
     
-    # Check SMART self-test
+    # SMART self-test failure is always critical
     if r.get('smart_status') not in ('PASSED', 'N/A', None):
         issues.append({'level': 'critical', 'text': 'SMART Failed'})
+    
+    def should_show_attr(attr_name: str) -> bool:
+        """Determine if an attribute's issue should be shown based on delta filter."""
+        # All time mode - show everything
+        if all_time:
+            return True
+        
+        # Critical state attrs always shown
+        if attr_name in CRITICAL_STATE_ATTRS:
+            return True
+        
+        # Cumulative counters - only show if delta > 0
+        if attr_name in CUMULATIVE_EVENT_ATTRS:
+            if history and attr_name in history:
+                attr_hist = history[attr_name]
+                delta = attr_hist.get('delta', 0) if isinstance(attr_hist, dict) else 0
+                return delta > 0
+            # No history data - don't show (can't prove it's new)
+            return False
+        
+        # Unknown attr type - show to be safe
+        return True
     
     # Check critical thresholds
     for attr_name, rule in rules.get('critical', {}).items():
@@ -604,10 +684,11 @@ def get_disk_issues(r: dict) -> list[dict]:
             continue
         val = attrs.get(attr_name)
         if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
             if check_threshold(check_val, rule):
-                display = rule.get('display', attr_name)
-                issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
+                if should_show_attr(attr_name):
+                    display = rule.get('display', attr_name)
+                    issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
     
     # Check warning thresholds (skip if already critical for same attribute)
     critical_attrs = set(rules.get('critical', {}).keys())
@@ -618,15 +699,16 @@ def get_disk_issues(r: dict) -> list[dict]:
         if attr_name in critical_attrs:
             val = attrs.get(attr_name)
             if val is not None:
-                check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+                check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
                 if check_threshold(check_val, rules['critical'][attr_name]):
                     continue
         val = attrs.get(attr_name)
         if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if disk_type != 'NVMe' else val
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
             if check_threshold(check_val, rule):
-                display = rule.get('display', attr_name)
-                issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
+                if should_show_attr(attr_name):
+                    display = rule.get('display', attr_name)
+                    issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
     
     return issues
 
@@ -720,7 +802,7 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
                 <td>{issues or '-'}</td>
             </tr>
             <tr class="detail-row" id="detail-{eid}">
-                <td colspan="8">
+                <td colspan="9">
                     <div class="detail-grid">
                         {detail_items}
                     </div>
@@ -833,7 +915,24 @@ def get_html_template() -> str:
         .stat.warning .stat-value { color: var(--warning); }
         .stat-sub { font-size: 12px; color: var(--text-muted); }
         
-        .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+        .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+        .delta-range { display: flex; align-items: center; gap: 4px; }
+        .delta-range .delta-label { font-size: 13px; color: var(--text-secondary); padding: 0 2px; }
+        .delta-range input[type="number"] { width: 50px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; text-align: center; }
+        .delta-range select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
+        .filter-separator { width: 1px; height: 24px; background: var(--border); margin: 0 12px; align-self: flex-end; margin-bottom: 6px; }
+        .filter-group { display: flex; align-items: center; gap: 4px; }
+        .filter-group-labeled { display: flex; flex-direction: column; gap: 4px; }
+        .filter-group-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+        .info-icon { cursor: help; opacity: 0.6; font-size: 11px; position: relative; }
+        .info-icon:hover { opacity: 1; }
+        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: #1a1a2e; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; max-width: 280px; white-space: normal; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); line-height: 1.4; }
+        [data-theme="dark"] .info-icon:hover::after { background: #2a3a52; }
+        .filter-group-controls { display: flex; align-items: center; gap: 6px; }
+        .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
+        .filter-group-controls > input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
+        .edit-thresholds-btn { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
+        .edit-thresholds-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
         select, input[type="text"] { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
         .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
         
@@ -849,7 +948,7 @@ def get_html_template() -> str:
         .host-group.collapsed .host-toggle { transform: rotate(-90deg); }
         .host-group.collapsed .host-content { display: none; }
         
-        .disk-table { width: 100%; border-collapse: collapse; }
+        .disk-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
         .disk-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); }
         .disk-table th.sortable { cursor: pointer; user-select: none; transition: color 0.15s; }
         .disk-table th.sortable:hover { color: var(--text-primary); }
@@ -875,6 +974,10 @@ def get_html_template() -> str:
         .issue { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-right: 4px; }
         .issue.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
         .issue.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
+        .since-incomplete { color: var(--warning); font-style: italic; cursor: help; }
+        .delta-period { font-size: 9px; color: var(--text-muted); font-weight: normal; }
+        .data-coverage-info { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--warning); }
+        [data-theme="dark"] .data-coverage-info { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.25); }
         .trend { font-size: 11px; color: var(--warning); }
         .muted { color: var(--text-muted); }
         .mono { font-family: monospace; font-size: 12px; }
@@ -966,25 +1069,6 @@ def get_html_template() -> str:
         [data-theme="dark"] .host-row .host-remove:hover { background: #7f1d1d; color: #fca5a5; }
         [data-theme="dark"] .host-input { background: #1a2538; border-color: #2a3a52; color: #e2e8f0; }
         [data-theme="dark"] .host-input:focus { border-color: #3b82f6; }
-        .preset-list { display: flex; flex-direction: column; gap: 6px; }
-        .preset-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; cursor: pointer; transition: background 0.12s; background: #ffffff; border: 1px solid #d5d9e0; }
-        .preset-option:hover { background: #e8edf3; }
-        .preset-option.active { background: #dbeafe; border-color: #93b4f5; }
-        .preset-option .preset-radio { width: 16px; height: 16px; border-radius: 50%; border: 2px solid #999; flex-shrink: 0; position: relative; }
-        .preset-option.active .preset-radio { border-color: #3b82f6; background: #3b82f6; }
-        .preset-option.active .preset-radio::after { content: ''; position: absolute; top: 3px; left: 3px; width: 6px; height: 6px; border-radius: 50%; background: #fff; }
-        .preset-option .preset-info { flex: 1; }
-        .preset-option .preset-name { font-size: 13px; font-weight: 600; color: #1a1a2e; text-transform: capitalize; }
-        .preset-option .preset-desc { font-size: 11px; color: #666; margin-top: 1px; line-height: 1.3; }
-        .preset-detail { margin-top: 14px; background: #ffffff; border: 1px solid #d5d9e0; border-radius: 6px; padding: 12px 14px; }
-        .preset-detail-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #555; margin-bottom: 8px; }
-        .preset-detail-group { font-size: 11px; font-weight: 700; color: #333; margin: 8px 0 4px 0; }
-        .preset-detail-group:first-child { margin-top: 0; }
-        .preset-detail table { width: 100%; border-collapse: collapse; }
-        .preset-detail th { text-align: left; font-size: 11px; font-weight: 600; color: #888; padding: 2px 6px 2px 0; border-bottom: 1px solid #e0e0e0; }
-        .preset-detail td { font-size: 12px; padding: 2px 6px 2px 0; font-family: 'SF Mono', 'Consolas', monospace; color: #333; }
-        .preset-detail .level-w { color: #d97706; }
-        .preset-detail .level-c { color: #dc2626; }
         /* Dark mode overrides */
         [data-theme="dark"] .settings-panel { background: #141c2b; color: #e2e8f0; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
         [data-theme="dark"] .settings-header { background: #1a2538; border-color: #2a3a52; }
@@ -993,19 +1077,47 @@ def get_html_template() -> str:
         [data-theme="dark"] .settings-close:hover { background: #334766; }
         [data-theme="dark"] .settings-section-title { color: #94a3b8; }
         [data-theme="dark"] .settings-section-hint { color: #64748b; }
-        [data-theme="dark"] .preset-option { background: #1a2538; border-color: #2a3a52; }
-        [data-theme="dark"] .preset-option:hover { background: #1f2e45; }
-        [data-theme="dark"] .preset-option.active { background: #1a2d4d; border-color: #3b6fc0; }
-        [data-theme="dark"] .preset-option .preset-radio { border-color: #4a5568; }
-        [data-theme="dark"] .preset-option .preset-name { color: #e2e8f0; }
-        [data-theme="dark"] .preset-option .preset-desc { color: #94a3b8; }
-        [data-theme="dark"] .preset-detail { background: #1a2538; border-color: #2a3a52; }
-        [data-theme="dark"] .preset-detail-title { color: #94a3b8; }
-        [data-theme="dark"] .preset-detail-group { color: #cbd5e1; }
-        [data-theme="dark"] .preset-detail th { color: #64748b; border-color: #2a3a52; }
-        [data-theme="dark"] .preset-detail td { color: #cbd5e1; }
-        [data-theme="dark"] .preset-detail .level-w { color: #fbbf24; }
-        [data-theme="dark"] .preset-detail .level-c { color: #f87171; }
+        
+        /* Threshold Editor */
+        .threshold-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
+        .threshold-overlay.visible { display: flex; }
+        .threshold-panel { background: #ffffff; border-radius: 12px; width: 580px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.3); }
+        .threshold-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #e5e7eb; background: #f8fafc; border-radius: 12px 12px 0 0; }
+        .threshold-header h2 { margin: 0; font-size: 16px; font-weight: 600; color: #1a1a2e; }
+        .threshold-close { width: 28px; height: 28px; border: none; border-radius: 6px; background: #e5e7eb; color: #666; cursor: pointer; font-size: 14px; }
+        .threshold-close:hover { background: #d1d5db; }
+        .threshold-body { padding: 20px; overflow-y: auto; background: #ffffff; border-radius: 0 0 12px 12px; }
+        .preset-buttons { display: flex; gap: 8px; margin-bottom: 8px; }
+        .preset-btn { flex: 1; padding: 10px 16px; border: 2px solid #e5e7eb; border-radius: 8px; background: #ffffff; color: #374151; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .preset-btn:hover { border-color: #9ca3af; }
+        .preset-btn.active { border-color: #3b82f6; background: #eff6ff; color: #3b82f6; }
+        .preset-hint { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
+        .threshold-section { margin-bottom: 20px; }
+        .threshold-section:last-child { margin-bottom: 0; }
+        .threshold-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
+        .threshold-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .threshold-table th { text-align: left; font-weight: 500; color: #6b7280; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+        .threshold-table td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
+        .threshold-table td:first-child { color: #374151; }
+        .threshold-input { display: flex; align-items: center; gap: 4px; }
+        .threshold-input select { width: 50px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; }
+        .threshold-input input { width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; text-align: center; }
+        .threshold-input input:disabled, .threshold-input select:disabled { opacity: 0.4; }
+        .threshold-input .unit { font-size: 11px; color: #9ca3af; }
+        [data-theme="dark"] .threshold-panel { background: #1a2332; }
+        [data-theme="dark"] .threshold-header { background: #141c2b; border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-header h2 { color: #e2e8f0; }
+        [data-theme="dark"] .threshold-close { background: #2a3a52; color: #94a3b8; }
+        [data-theme="dark"] .threshold-close:hover { background: #334766; }
+        [data-theme="dark"] .threshold-body { background: #1a2332; }
+        [data-theme="dark"] .preset-btn { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .preset-btn:hover { border-color: #4a5568; }
+        [data-theme="dark"] .preset-btn.active { background: rgba(59,130,246,0.15); border-color: #3b82f6; }
+        [data-theme="dark"] .preset-hint { color: #64748b; }
+        [data-theme="dark"] .threshold-section-title { color: #94a3b8; }
+        [data-theme="dark"] .threshold-table th { color: #94a3b8; border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-table td { color: #e2e8f0; border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-input select, [data-theme="dark"] .threshold-input input { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
         
         @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
     </style>
@@ -1041,11 +1153,41 @@ def get_html_template() -> str:
                     <div class="settings-section-title" style="margin-top:16px">SSH User</div>
                     <p class="settings-section-hint">User for SSH connections to remote hosts.</p>
                     <input type="text" id="sshUserInput" class="host-input" style="width:160px" onchange="saveSshUser()">
+                </div>
+            </div>
+        </div>
+        
+        <!-- Threshold Editor Popup -->
+        <div class="threshold-overlay" id="thresholdOverlay" onclick="if(event.target===this)toggleThresholdEditor()">
+            <div class="threshold-panel">
+                <div class="threshold-header">
+                    <h2>Threshold Settings</h2>
+                    <button class="threshold-close" onclick="toggleThresholdEditor()">✕</button>
+                </div>
+                <div class="threshold-body">
+                    <div class="preset-buttons">
+                        <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
+                        <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
+                        <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
+                        <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
+                    </div>
+                    <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
                     
-                    <div class="settings-section-title" style="margin-top:16px">Threshold Preset</div>
-                    <p class="settings-section-hint">Affects dashboard status and future notifications.</p>
-                    <div id="presetList" class="preset-list">Loading...</div>
-                    <div id="presetDetail" class="preset-detail"></div>
+                    <div class="threshold-section">
+                        <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
+                        <table class="threshold-table" id="ataThresholds">
+                            <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="threshold-section">
+                        <div class="threshold-section-title">NVMe</div>
+                        <table class="threshold-table" id="nvmeThresholds">
+                            <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1074,16 +1216,48 @@ def get_html_template() -> str:
         </div>
         
         <div class="filters">
-            <select id="hostFilter" onchange="applyFilters()">
-                <option value="">All Hosts</option>
-            </select>
-            <select id="typeFilter" onchange="applyFilters()">
-                <option value="">All Types</option>
-                <option value="HDD">HDD</option>
-                <option value="SSD">SSD</option>
-                <option value="NVMe">NVMe</option>
-            </select>
-            <input type="text" id="search" placeholder="Search..." onkeyup="applyFilters()">
+            <div class="filter-group-labeled">
+                <span class="filter-group-label">Filter</span>
+                <div class="filter-group-controls">
+                    <select id="hostFilter" onchange="applyFilters()">
+                        <option value="">All Hosts</option>
+                    </select>
+                    <select id="typeFilter" onchange="applyFilters()">
+                        <option value="">All Types</option>
+                        <option value="HDD">HDD</option>
+                        <option value="SSD">SSD</option>
+                        <option value="NVMe">NVMe</option>
+                    </select>
+                    <input type="text" id="search" placeholder="Search..." onkeyup="applyFilters()">
+                </div>
+            </div>
+            <div class="filter-separator"></div>
+            <div class="filter-group-labeled">
+                <span class="filter-group-label">Thresholds <span class="info-icon" data-tip="Warning/critical thresholds for SMART values. Relaxed = fewer alerts, Backblaze = industry standard based on 300k+ drives.">ⓘ</span></span>
+                <div class="filter-group-controls">
+                    <select id="presetFilter" onchange="changePreset(this.value)">
+                        <option value="relaxed">Relaxed</option>
+                        <option value="conservative">Conservative</option>
+                        <option value="backblaze">Backblaze</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                    <button class="edit-thresholds-btn" onclick="toggleThresholdEditor()" title="Edit thresholds">⚙</button>
+                </div>
+            </div>
+            <div class="filter-separator"></div>
+            <div class="filter-group-labeled">
+                <span class="filter-group-label">History <span class="info-icon" data-tip="Time range for detecting new issues. Event counters (timeouts, errors) only show as issues if they increased within this period.">ⓘ</span></span>
+                <div class="filter-group-controls">
+                    <select id="deltaRange" onchange="updateDeltaFromDropdown(this.value)">
+                        <option value="1h">Δ 1 hour</option>
+                        <option value="24h">Δ 24 hours</option>
+                        <option value="7d" selected>Δ 7 days</option>
+                        <option value="30d">Δ 30 days</option>
+                        <option value="90d">Δ 90 days</option>
+                        <option value="all">Δ all time</option>
+                    </select>
+                </div>
+            </div>
         </div>
         
         <div id="content"><div class="loading">Loading...</div></div>
@@ -1095,6 +1269,8 @@ def get_html_template() -> str:
     let data = { disks: [], hosts: [], stats: {}, trends: {}, thresholds: {} };
     let historyCache = {};
     let statusFilter = '';
+    let deltaRangeDays = 30;
+    let settingsData = null;
 
     // Health-relevant attributes by type (order matters - shown first)
     // Attribute descriptions for tooltips
@@ -1270,6 +1446,16 @@ def get_html_template() -> str:
         if (spec.extract === 'high16') return (raw >> 32) & 0xFFFF;
         return raw;
     }
+    
+    // Format time duration: <1h = Xmin, <1d = Xh, else Xd
+    function formatDuration(ms) {
+        const minutes = ms / 60000;
+        const hours = ms / 3600000;
+        const days = ms / 86400000;
+        if (days >= 1) return Math.floor(days) + 'd';
+        if (hours >= 1) return Math.floor(hours) + 'h';
+        return Math.max(1, Math.floor(minutes)) + 'min';
+    }
 
     function getAttrColor(attrKey, value, diskType) {
         // Decode Seagate composites before threshold check
@@ -1298,6 +1484,18 @@ def get_html_template() -> str:
         if (rule.op === '==') return v === t;
         return false;
     }
+    
+    // Cumulative event counters - used for display hints (delta suffix)
+    // Actual filtering is now done in backend
+    const CUMULATIVE_EVENT_ATTRS = new Set([
+        'Command_Timeout',
+        'Reported_Uncorrect', 
+        'UDMA_CRC_Error_Count',
+        'Unsafe_Shutdowns',
+        'Error_Information_Log_Entries',
+        'Power_Off_Retract_Count',
+        'G-Sense_Error_Rate',
+    ]);
 
     function getValClass(attrKey, value, diskType) {
         const checkVal = (diskType !== 'NVMe') ? decodeSeagateValue(attrKey, value) : value;
@@ -1350,7 +1548,7 @@ def get_html_template() -> str:
         return '';
     }
 
-    function renderAttrRow(attrDef, attrs, hist, diskType, showId) {
+    function renderAttrRow(attrDef, attrs, hist, diskType, showId, dataCoversFilter, dataAgeMs) {
         const key = attrDef.key;
         let val = attrs[key];
         // Temperature fallback
@@ -1378,8 +1576,17 @@ def get_html_template() -> str:
 
         let deltaStr = '—';
         let deltaClass = '';
-        if (delta > 0) { deltaStr = `+${delta} ↑`; deltaClass = 'delta-up'; }
-        else if (delta < 0) { deltaStr = `${delta} ↓`; deltaClass = ''; }
+        if (delta > 0) { 
+            deltaStr = `+${delta} ↑`; 
+            deltaClass = 'delta-up'; 
+        } else if (delta < 0) { 
+            deltaStr = `${delta} ↓`; 
+        }
+        
+        // Add period suffix if data doesn't cover filter period
+        if (delta !== 0 && !dataCoversFilter && dataAgeMs > 0) {
+            deltaStr += ` <span class="delta-period">(${formatDuration(dataAgeMs)})</span>`;
+        }
 
         // Suffix for special attrs
         let suffix = '';
@@ -1401,9 +1608,9 @@ def get_html_template() -> str:
         </tr>`;
     }
 
-    async function loadHistory() {
+    async function loadHistory(force = false) {
         try {
-            const resp = await fetch('/api/history');
+            const resp = await fetch(`/api/history?days=${deltaRangeDays}`);
             if (resp.ok) historyCache = await resp.json();
         } catch (e) { console.warn('History load failed:', e); }
     }
@@ -1412,7 +1619,7 @@ def get_html_template() -> str:
         try {
             const [diskResp] = await Promise.all([
                 fetch('/api/disks'),
-                Object.keys(historyCache).length === 0 ? loadHistory() : Promise.resolve(),
+                loadHistory(),
             ]);
             if (!diskResp.ok) throw new Error('Failed to load data');
             data = await diskResp.json();
@@ -1488,6 +1695,17 @@ def get_html_template() -> str:
                 </div>
                 <div class="host-content">
                     <table class="disk-table">
+                        <colgroup>
+                            <col style="width: 140px">
+                            <col style="width: 240px">
+                            <col style="width: 150px">
+                            <col style="width: 80px">
+                            <col style="width: 80px">
+                            <col style="width: 65px">
+                            <col style="width: 65px">
+                            <col style="width: 100px">
+                            <col>
+                        </colgroup>
                         <thead><tr>
                             <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
                             <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
@@ -1495,6 +1713,7 @@ def get_html_template() -> str:
                             <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
                             <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
                             <th class="sortable" onclick="sortDisks('temp')">Temp <span class="sort-icon">⇅</span></th>
+                            <th class="sortable" onclick="sortDisks('since')">Since <span class="sort-icon">⇅</span></th>
                             <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
                             <th>Issues</th>
                         </tr></thead>
@@ -1535,7 +1754,37 @@ def get_html_template() -> str:
         temp = temp != null ? temp : '-';
         const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
 
-        // Issues
+        // Calculate data availability (time since first reading)
+        const hMeta = hist || {};
+        const firstReading = hMeta._first || '';
+        const dataAgeMs = firstReading ? (new Date() - new Date(firstReading)) : 0;
+        const dataAgeMinutes = dataAgeMs / 60000;
+        const dataAgeHours = dataAgeMs / 3600000;
+        const dataDays = dataAgeMs / 86400000;
+        const dataCoversFilter = dataDays >= deltaRangeDays || deltaRangeDays >= 36500;
+        
+        // Since cell - show when data started, highlight if filter exceeds data
+        let sinceText = '-';
+        let sinceClass = '';
+        let sinceTooltip = '';
+        if (firstReading) {
+            // Format: <1h = minutes, <1d = hours, else days
+            if (dataDays >= 1) {
+                sinceText = Math.floor(dataDays) + 'd';
+            } else if (dataAgeHours >= 1) {
+                sinceText = Math.floor(dataAgeHours) + 'h';
+            } else {
+                sinceText = Math.max(1, Math.floor(dataAgeMinutes)) + 'min';
+            }
+            
+            if (!dataCoversFilter) {
+                sinceClass = 'since-incomplete';
+                const filterStr = deltaRangeDays < 1 ? Math.round(deltaRangeDays * 24) + ' hours' : Math.round(deltaRangeDays) + ' days';
+                sinceTooltip = `Only ${sinceText} of data, filter requests ${filterStr}`;
+            }
+        }
+
+        // Issues - already filtered by backend based on delta
         let issues = '';
         if (d.issues && d.issues.length > 0) {
             for (const issue of d.issues) {
@@ -1564,7 +1813,6 @@ def get_html_template() -> str:
         if (sectorSize) sbHtml += `<div class="sidebar-item"><div class="sb-label">Sector Size</div><div class="sb-value">${sectorSize}B</div></div>`;
 
         // History footer info
-        const hMeta = hist || {};
         const nReadings = hMeta._readings || 0;
         const first = hMeta._first || '';
         const last = hMeta._last || '';
@@ -1581,7 +1829,7 @@ def get_html_template() -> str:
         // Health attribute rows
         let healthRows = '';
         for (const attrDef of healthDefs) {
-            healthRows += renderAttrRow(attrDef, attrs, hist, diskType, !isNVMe);
+            healthRows += renderAttrRow(attrDef, attrs, hist, diskType, !isNVMe, dataCoversFilter, dataAgeMs);
         }
 
         // Secondary attributes
@@ -1596,6 +1844,10 @@ def get_html_template() -> str:
             let deltaStr = '\u2014';
             if (delta > 0) { deltaStr = `+${delta}`; }
             else if (delta < 0) { deltaStr = `${delta}`; }
+            // Add period suffix if data doesn't cover filter
+            if (delta !== 0 && !dataCoversFilter && dataAgeMs > 0) {
+                deltaStr += ` <span class="delta-period">(${formatDuration(dataAgeMs)})</span>`;
+            }
             const label = key.replace(/_/g, ' ');
             const tip = ATTR_TIPS[key] || '';
             const tipAttr = tip ? ` data-tip="${tip}"` : '';
@@ -1623,6 +1875,13 @@ def get_html_template() -> str:
 
         const secId = 'sec-' + eid;
         const totalAttrs = healthDefs.length + secondaryAttrs.length;
+        
+        // Info banner if data doesn't cover filter period
+        let infoBanner = '';
+        if (!dataCoversFilter && dataAgeMs > 0) {
+            const filterStr = deltaRangeDays < 1 ? `${Math.round(deltaRangeDays * 24)} hours` : deltaRangeDays >= 36500 ? 'all time' : `${Math.round(deltaRangeDays)} days`;
+            infoBanner = `<div class="data-coverage-info">ℹ Data available: ${sinceText} · Filter: ${filterStr}</div>`;
+        }
 
         return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${eid}')">
             <td><span class="device-name">${d.device}</span><span class="type-badge ${typeClass}">${d.type}</span></td>
@@ -1631,14 +1890,16 @@ def get_html_template() -> str:
             <td>${capacity}</td>
             <td class="mono">${hoursFmt}${trend}</td>
             <td>${temp}°</td>
+            <td class="${sinceClass}"${sinceTooltip ? ` title="${sinceTooltip}"` : ''}>${sinceText}</td>
             <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
             <td>${issues || '-'}</td>
         </tr>
         <tr class="detail-row" id="detail-${eid}">
-            <td colspan="8">
+            <td colspan="9">
                 <div class="detail-panel">
                     <div class="detail-sidebar">${sbHtml}</div>
                     <div class="detail-main">
+                        ${infoBanner}
                         <div class="attr-section-header">
                             <div class="attr-section-title">Health & Endurance</div>
                             ${secondaryAttrs.length > 0 ? `<button class="show-all-btn" id="btn-${secId}" onclick="event.stopPropagation(); let el=document.getElementById('${secId}'); el.classList.toggle('visible'); this.textContent=el.classList.contains('visible')?'Show less':'Show all ${totalAttrs} attributes';">Show all ${totalAttrs} attributes</button>` : ''}
@@ -1656,7 +1917,7 @@ def get_html_template() -> str:
                             ${secondaryAttrs.length > 0 ? `<tbody id="${secId}" class="secondary-attrs">${secondaryRows}</tbody>` : ''}
                         </table>
                         </div>
-                        ${spanText ? `<div class="detail-footer">Last scan: <span>${last}</span></div>` : ''}
+                        ${spanText ? `<div class="detail-footer">First scan: <span>${first}</span> · Last scan: <span>${last}</span></div>` : ''}
                     </div>
                 </div>
             </td>
@@ -1704,6 +1965,52 @@ def get_html_template() -> str:
         });
     }
     
+    // Delta range presets mapping
+    const DELTA_PRESETS = {
+        '1h': 1/24,
+        '24h': 1,
+        '7d': 7,
+        '30d': 30,
+        '90d': 90,
+        'all': 36500
+    };
+    
+    function updateDeltaFromDropdown(value) {
+        if (DELTA_PRESETS[value] !== undefined) {
+            deltaRangeDays = DELTA_PRESETS[value];
+        }
+        
+        // Persist to localStorage
+        localStorage.setItem('deltaRangePreset', value);
+        
+        // Save to server config, then reload all data (backend recalculates issues/status)
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({delta_preset: value})
+        }).then(() => {
+            // Reload data - backend will recalculate issues and status based on new delta
+            loadData();
+        }).catch(e => console.warn('Failed to save delta range:', e));
+    }
+    
+    function restoreDeltaRange() {
+        // Try to get from settingsData (server), fall back to localStorage
+        let preset = '7d';
+        if (settingsData && settingsData.delta_preset) {
+            preset = settingsData.delta_preset;
+        } else {
+            const saved = localStorage.getItem('deltaRangePreset');
+            if (saved) preset = saved;
+        }
+        
+        const dropdown = document.getElementById('deltaRange');
+        if (dropdown) {
+            dropdown.value = preset;
+            deltaRangeDays = DELTA_PRESETS[preset] || 7;
+        }
+    }
+    
     let currentSort = {field: 'device', asc: true};
     
     function sortDisks(field) {
@@ -1739,6 +2046,11 @@ def get_html_template() -> str:
             case 'size': return disk.capacity_bytes || 0;
             case 'hours': return parseInt(attrs.Power_On_Hours || 0);
             case 'temp': return parseInt(attrs.Temperature_Celsius || attrs.Airflow_Temperature_Cel || attrs.Temperature || 0);
+            case 'since':
+                const diskId = disk.disk_id || disk.serial;
+                const hist = historyCache[diskId] || {};
+                const first = hist._first || '';
+                return first ? new Date(first).getTime() : 0;
             case 'status': 
                 const statusOrder = {'critical': 0, 'warning': 1, 'ok': 2};
                 return statusOrder[disk.status] ?? 2;
@@ -1775,7 +2087,6 @@ def get_html_template() -> str:
     }
     
     // --- Settings Panel ---
-    let settingsData = null;
     
     function toggleSettings() {
         const overlay = document.getElementById('settingsOverlay');
@@ -1791,11 +2102,11 @@ def get_html_template() -> str:
         try {
             const res = await fetch('/api/settings');
             settingsData = await res.json();
-            renderPresets();
             renderHosts();
             document.getElementById('sshUserInput').value = settingsData.ssh_user || 'root';
+            updatePresetDropdown();
         } catch (e) {
-            document.getElementById('presetList').textContent = 'Failed to load settings.';
+            console.error('Failed to load settings:', e);
         }
     }
     
@@ -1882,49 +2193,6 @@ def get_html_template() -> str:
         } catch (e) { console.error('Failed to save SSH user:', e); }
     }
     
-    function renderPresets() {
-        if (!settingsData) return;
-        const container = document.getElementById('presetList');
-        container.innerHTML = '';
-        for (const p of settingsData.presets) {
-            const div = document.createElement('div');
-            div.className = 'preset-option' + (p.active ? ' active' : '');
-            div.onclick = () => setPreset(p.name);
-            div.innerHTML = `<div class="preset-radio"></div><div class="preset-info"><div class="preset-name">${p.name}</div><div class="preset-desc">${p.description}</div></div>`;
-            container.appendChild(div);
-        }
-        renderPresetDetail();
-    }
-    
-    function renderPresetDetail() {
-        const detail = document.getElementById('presetDetail');
-        if (!settingsData || !settingsData.thresholds) { detail.innerHTML = ''; return; }
-        const t = settingsData.thresholds;
-        let html = '<div class="preset-detail-title">Active thresholds</div>';
-        
-        for (const [diskType, rules] of Object.entries(t)) {
-            if (diskType.startsWith('_')) continue;
-            html += `<div class="preset-detail-group">${diskType.toUpperCase()}</div><table>`;
-            html += '<tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr>';
-            
-            // Collect all attribute names across warning and critical
-            const allAttrs = new Set();
-            for (const name of Object.keys(rules.warning || {})) { if (!name.startsWith('_')) allAttrs.add(name); }
-            for (const name of Object.keys(rules.critical || {})) { if (!name.startsWith('_')) allAttrs.add(name); }
-            
-            for (const attr of allAttrs) {
-                const w = (rules.warning || {})[attr];
-                const c = (rules.critical || {})[attr];
-                const wText = w ? `<span class="level-w">${w.op} ${w.value}</span>` : '-';
-                const cText = c ? `<span class="level-c">${c.op} ${c.value}</span>` : '-';
-                const displayName = attr.replace(/_/g, ' ');
-                html += `<tr><td>${displayName}</td><td>${wText}</td><td>${cText}</td></tr>`;
-            }
-            html += '</table>';
-        }
-        detail.innerHTML = html;
-    }
-    
     async function setPreset(name) {
         try {
             const res = await fetch('/api/settings', {
@@ -1934,6 +2202,8 @@ def get_html_template() -> str:
             });
             const result = await res.json();
             if (result.success) {
+                // Update settingsData immediately with new preset
+                if (settingsData) settingsData.active_preset = name;
                 await loadSettings();
                 loadData(); // Re-classify all disks with new thresholds
             }
@@ -1942,12 +2212,237 @@ def get_html_template() -> str:
         }
     }
     
+    async function changePreset(name) {
+        // Immediately update UI
+        document.getElementById('presetFilter').value = name;
+        currentThresholdPreset = name;
+        updatePresetButtons();
+        
+        if (name !== 'custom') {
+            await setPreset(name);
+        }
+    }
+    
+    function updatePresetDropdown() {
+        if (settingsData && settingsData.active_preset) {
+            document.getElementById('presetFilter').value = settingsData.active_preset;
+        }
+    }
+    
+    // Threshold Editor
+    const THRESHOLD_ATTRS = {
+        ata: [
+            { key: 'Reallocated_Sector_Ct', label: 'Reallocated Sectors', id: 5 },
+            { key: 'Reported_Uncorrect', label: 'Reported Uncorrectable', id: 187 },
+            { key: 'Command_Timeout', label: 'Command Timeout', id: 188 },
+            { key: 'Current_Pending_Sector', label: 'Current Pending Sectors', id: 197 },
+            { key: 'Offline_Uncorrectable', label: 'Offline Uncorrectable', id: 198 },
+        ],
+        nvme: [
+            { key: 'Critical_Warning', label: 'Critical Warning' },
+            { key: 'Media_and_Data_Integrity_Errors', label: 'Media Errors' },
+            { key: 'Available_Spare', label: 'Available Spare', unit: '%', defaultOp: '<' },
+            { key: 'Percentage_Used', label: 'Percentage Used', unit: '%' },
+            { key: 'Error_Information_Log_Entries', label: 'Error Log Entries' },
+            { key: 'Unsafe_Shutdowns', label: 'Unsafe Shutdowns' },
+        ]
+    };
+    
+    const PRESET_HINTS = {
+        relaxed: 'Relaxed: Higher thresholds for home/lab use. Fewer false positives, alerts only on clear degradation.',
+        conservative: 'Conservative: Stricter thresholds for important data. Earlier warnings for proactive replacement.',
+        backblaze: 'Backblaze: Based on failure data from 300k+ drives. Balanced sensitivity, industry standard.',
+        custom: 'Custom: Your own threshold values. Edit the fields below to customize.'
+    };
+    
+    let thresholdPresets = {};
+    let currentThresholdPreset = 'backblaze';
+    
+    function toggleThresholdEditor() {
+        const overlay = document.getElementById('thresholdOverlay');
+        if (overlay.classList.contains('visible')) {
+            overlay.classList.remove('visible');
+        } else {
+            overlay.classList.add('visible');
+            renderThresholdEditor();
+        }
+    }
+    
+    function renderThresholdEditor() {
+        if (!settingsData) return;
+        
+        thresholdPresets = settingsData.all_presets || {};
+        currentThresholdPreset = settingsData.active_preset || 'backblaze';
+        
+        // Get thresholds to display
+        const current = settingsData.thresholds || {};
+        
+        // Render tables
+        const isCustom = currentThresholdPreset === 'custom';
+        renderThresholdTable('ata', current.ata || {}, isCustom);
+        renderThresholdTable('nvme', current.nvme || {}, isCustom);
+        
+        // Update UI
+        updatePresetButtons();
+        updatePresetHint();
+    }
+    
+    function renderThresholdTable(type, thresholds, editable) {
+        const tbody = document.querySelector(`#${type}Thresholds tbody`);
+        const attrs = THRESHOLD_ATTRS[type];
+        
+        let html = '';
+        for (const attr of attrs) {
+            const warn = (thresholds.warning || {})[attr.key] || {};
+            const crit = (thresholds.critical || {})[attr.key] || {};
+            const defaultOp = attr.defaultOp || '>';
+            const disabled = editable ? '' : 'disabled';
+            
+            const warnOp = warn.op || (warn.value !== undefined ? defaultOp : '-');
+            const critOp = crit.op || (crit.value !== undefined ? defaultOp : '-');
+            
+            html += `<tr data-attr="${attr.key}">
+                <td>${attr.label}</td>
+                <td>
+                    <div class="threshold-input">
+                        <select data-type="${type}" data-level="warning" data-attr="${attr.key}" data-field="op" onchange="onThresholdChange()" ${disabled}>
+                            <option value=">" ${warnOp === '>' ? 'selected' : ''}>&gt;</option>
+                            <option value=">=" ${warnOp === '>=' ? 'selected' : ''}>&ge;</option>
+                            <option value="<" ${warnOp === '<' ? 'selected' : ''}>&lt;</option>
+                            <option value="<=" ${warnOp === '<=' ? 'selected' : ''}>&le;</option>
+                            <option value="-" ${warnOp === '-' ? 'selected' : ''}>off</option>
+                        </select>
+                        <input type="number" min="0" value="${warn.value ?? ''}" 
+                            data-type="${type}" data-level="warning" data-attr="${attr.key}" data-field="value"
+                            onchange="onThresholdChange()" ${disabled || warnOp === '-' ? 'disabled' : ''}>
+                        ${attr.unit ? `<span class="unit">${attr.unit}</span>` : ''}
+                    </div>
+                </td>
+                <td>
+                    <div class="threshold-input">
+                        <select data-type="${type}" data-level="critical" data-attr="${attr.key}" data-field="op" onchange="onThresholdChange()" ${disabled}>
+                            <option value=">" ${critOp === '>' ? 'selected' : ''}>&gt;</option>
+                            <option value=">=" ${critOp === '>=' ? 'selected' : ''}>&ge;</option>
+                            <option value="<" ${critOp === '<' ? 'selected' : ''}>&lt;</option>
+                            <option value="<=" ${critOp === '<=' ? 'selected' : ''}>&le;</option>
+                            <option value="-" ${critOp === '-' ? 'selected' : ''}>off</option>
+                        </select>
+                        <input type="number" min="0" value="${crit.value ?? ''}" 
+                            data-type="${type}" data-level="critical" data-attr="${attr.key}" data-field="value"
+                            onchange="onThresholdChange()" ${disabled || critOp === '-' ? 'disabled' : ''}>
+                        ${attr.unit ? `<span class="unit">${attr.unit}</span>` : ''}
+                    </div>
+                </td>
+            </tr>`;
+        }
+        tbody.innerHTML = html;
+    }
+    
+    function onThresholdChange() {
+        // Enable/disable value input based on op selection
+        document.querySelectorAll('.threshold-input select[data-field="op"]:not([disabled])').forEach(sel => {
+            const input = sel.parentElement.querySelector('input');
+            input.disabled = sel.value === '-';
+        });
+        
+        // Save after short delay
+        clearTimeout(window._thresholdSaveTimeout);
+        window._thresholdSaveTimeout = setTimeout(saveCustomThresholds, 500);
+    }
+    
+    function updatePresetButtons() {
+        document.querySelectorAll('.preset-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.preset === currentThresholdPreset);
+        });
+        document.getElementById('presetFilter').value = currentThresholdPreset;
+    }
+    
+    function updatePresetHint() {
+        document.getElementById('presetHint').textContent = PRESET_HINTS[currentThresholdPreset] || '';
+    }
+    
+    function selectPreset(name) {
+        currentThresholdPreset = name;
+        document.getElementById('presetFilter').value = name;
+        
+        const isCustom = name === 'custom';
+        
+        if (isCustom) {
+            // Load current values (or last custom, or copy from current preset)
+            const current = settingsData.thresholds || thresholdPresets['backblaze'] || {};
+            renderThresholdTable('ata', current.ata || {}, true);
+            renderThresholdTable('nvme', current.nvme || {}, true);
+        } else {
+            // Load preset values (read-only)
+            const preset = thresholdPresets[name];
+            if (preset) {
+                renderThresholdTable('ata', preset.ata || {}, false);
+                renderThresholdTable('nvme', preset.nvme || {}, false);
+            }
+            // Save preset selection
+            setPreset(name);
+        }
+        
+        updatePresetButtons();
+        updatePresetHint();
+    }
+    
+    async function saveCustomThresholds() {
+        // Collect all threshold values from the form
+        const thresholds = { ata: { warning: {}, critical: {} }, nvme: { warning: {}, critical: {} } };
+        
+        document.querySelectorAll('.threshold-input select[data-field="op"]:not([disabled])').forEach(sel => {
+            const type = sel.dataset.type;
+            const level = sel.dataset.level;
+            const attr = sel.dataset.attr;
+            const op = sel.value;
+            
+            if (op !== '-') {
+                const input = sel.parentElement.querySelector('input');
+                const value = parseInt(input.value) || 0;
+                const attrDef = THRESHOLD_ATTRS[type].find(a => a.key === attr);
+                
+                thresholds[type][level][attr] = {
+                    op: op,
+                    value: value,
+                    display: attrDef?.label?.toLowerCase() || attr.replace(/_/g, ' ').toLowerCase()
+                };
+                if (attrDef?.id) thresholds[type][level][attr].id = attrDef.id;
+            }
+        });
+        
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ custom_thresholds: thresholds, threshold_preset: 'custom' })
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.thresholds = thresholds;
+                settingsData.active_preset = 'custom';
+                loadData();
+            }
+        } catch (e) {
+            console.error('Failed to save custom thresholds:', e);
+        }
+    }
+    
     // Init
     if (localStorage.getItem('theme') === 'dark') {
         document.body.setAttribute('data-theme', 'dark');
         document.getElementById('themeBtn').textContent = '🌙';
     }
-    loadData();
+    // Load settings to get delta range and preset, then load data
+    fetch('/api/settings').then(r => r.json()).then(s => {
+        settingsData = s;
+        restoreDeltaRange();
+        updatePresetDropdown();
+        loadData();
+    }).catch(() => {
+        restoreDeltaRange();
+        loadData();
+    });
     setInterval(loadData, 60000); // Auto-refresh every minute
     </script>
 </body>
@@ -1995,8 +2490,15 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
             elif path == '/api/disks':
                 readings = get_current_readings(self.db_path)
                 trends = get_trends(self.db_path)
-                stats = get_stats(readings)
                 hosts = list(set(r['host'] for r in readings))
+                
+                # Get delta setting from config
+                config = load_config()
+                delta_preset = config.get('delta_preset', '7d')
+                delta_days = DELTA_PRESETS.get(delta_preset, 7)
+                
+                # Load history for delta calculations
+                history_data = get_disk_history(self.db_path, days=delta_days if delta_days < 36500 else 365)
                 
                 # Classify and parse smart_attributes
                 for r in readings:
@@ -2009,8 +2511,15 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     else:
                         r['smart_attributes'] = {}
                     
-                    r['status'] = classify_disk(r)
-                    r['issues'] = get_disk_issues(r)
+                    # Get history for this disk
+                    disk_id = r.get('disk_id') or r.get('serial')
+                    disk_history = history_data.get(disk_id, {})
+                    
+                    r['status'] = classify_disk(r, disk_history, delta_days)
+                    r['issues'] = get_disk_issues(r, disk_history, delta_days)
+                
+                # Recalculate stats based on new status values
+                stats = get_stats(readings)
                 
                 # Also send thresholds to frontend for client-side awareness
                 self.send_json({
@@ -2047,16 +2556,18 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 self.send_json({
                     'active_preset': preset_name,
                     'presets': preset_list,
+                    'all_presets': presets,  # Full preset data for threshold editor
                     'thresholds': get_thresholds(),
                     'hosts': config.get('hosts', []),
                     'ssh_user': config.get('ssh', {}).get('user', 'root'),
                     'host_stats': get_host_stats(self.db_path),
+                    'delta_preset': config.get('delta_preset', '7d'),
                 })
 
             elif path == '/api/history':
                 params = parse_qs(parsed.query)
                 disk_id = params.get('disk_id', [None])[0]
-                days = int(params.get('days', [30])[0])
+                days = float(params.get('days', [30])[0])
                 history = get_disk_history(self.db_path, disk_id, days)
                 self.send_json(history)
             
@@ -2087,16 +2598,29 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 
                 result = {}
                 
+                # Handle custom thresholds
+                custom_thresholds = data.get('custom_thresholds')
+                if custom_thresholds:
+                    # Save custom thresholds to config
+                    save_custom_thresholds(custom_thresholds)
+                    invalidate_threshold_cache()
+                    result['thresholds'] = custom_thresholds
+                
                 # Handle threshold preset change
                 preset_name = data.get('threshold_preset')
                 if preset_name:
-                    presets = load_all_presets()
-                    if preset_name not in presets:
-                        self.send_json({'error': f'Unknown preset: {preset_name}'}, 400)
-                        return
-                    save_config_value('threshold_preset', preset_name)
-                    invalidate_threshold_cache()
-                    result['active_preset'] = preset_name
+                    if preset_name == 'custom':
+                        # Just mark as custom, thresholds already saved above
+                        save_config_value('threshold_preset', 'custom')
+                        result['active_preset'] = 'custom'
+                    else:
+                        presets = load_all_presets()
+                        if preset_name not in presets:
+                            self.send_json({'error': f'Unknown preset: {preset_name}'}, 400)
+                            return
+                        save_config_value('threshold_preset', preset_name)
+                        invalidate_threshold_cache()
+                        result['active_preset'] = preset_name
                 
                 # Handle hosts change
                 hosts = data.get('hosts')
@@ -2111,6 +2635,12 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 if ssh_user is not None:
                     save_config_subkey('ssh', 'user', ssh_user.strip())
                     result['ssh_user'] = ssh_user.strip()
+                
+                # Handle delta preset change
+                delta_preset = data.get('delta_preset')
+                if delta_preset is not None:
+                    save_config_value('delta_preset', delta_preset)
+                    result['delta_preset'] = delta_preset
                 
                 result['success'] = True
                 self.send_json(result)

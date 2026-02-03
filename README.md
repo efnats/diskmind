@@ -12,12 +12,13 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 - **Web dashboard** — sortable tables, dark/light theme, status filtering
 - **Settings panel** — manage hosts, SSH user, and threshold presets from the dashboard
 - **Static reports** — generate standalone HTML files for sharing or archival
-- **Trend tracking** — sparkline charts showing 30-day attribute history with delta indicators
+- **Trend tracking** — sparkline charts showing attribute history with delta indicators
+- **Delta-based alerting** — cumulative counters (timeouts, errors) only trigger warnings if they increased within the selected time range
+- **Configurable thresholds** — three presets (relaxed, conservative, backblaze) with custom threshold editor
 - **Seagate decoding** — composite raw values (Command_Timeout, Raw_Read_Error_Rate, Seek_Error_Rate) decoded automatically
 - **Attribute tooltips** — hover any attribute name for a plain-language explanation
 - **Threshold tooltips** — hover colored values to see why they triggered a warning or critical alert
 - **Human-readable LBAs** — Total_LBAs_Written/Read and Data_Units shown as TB/PB with raw value on hover
-- **Configurable thresholds** — three presets (backblaze, conservative, relaxed) selectable via config or UI
 - **Zero dependencies** — Python 3 standard library only (no pip install needed)
 - **Single-file scripts** — easy to deploy, nothing to compile
 
@@ -31,7 +32,7 @@ diskmind/
   lib/                Internal components (not user-edited)
     diskmind-scan       Runs on each target host, calls smartctl, outputs CSV
   config/             User-editable settings
-    config.yaml         Hosts, SSH, database, threshold preset
+    config.yaml         Hosts, SSH, database, threshold preset, delta range
     thresholds.json     Threshold preset definitions
   data/               Runtime data (gitignored)
     smart.db            SQLite database
@@ -136,13 +137,33 @@ database:
   path: ./data/smart.db
   retention_days: 365
 
-# Threshold preset: backblaze, conservative, relaxed
+# Threshold preset: relaxed, conservative, backblaze
 threshold_preset: backblaze
+
+# Delta time range for issue detection: 1h, 24h, 7d, 30d, 90d, all
+delta_preset: 7d
 ```
 
-Available presets: `backblaze` (default), `conservative`, `relaxed`. Preset definitions are in `config/thresholds.json`.
+### Threshold Presets
 
-Hosts, SSH user, and threshold preset can also be managed from the dashboard settings panel (⚙️ button). Changes are written directly to `config.yaml`.
+| Preset | Use Case |
+|--------|----------|
+| **Relaxed** | Home/lab use. Higher thresholds, fewer false positives. |
+| **Conservative** | Important data. Stricter thresholds for early warnings. |
+| **Backblaze** | Industry standard based on 300k+ drive failure data. |
+
+Presets can be selected from the dashboard or edited with the built-in threshold editor (⚙️ button).
+
+### Delta-Based Issue Detection
+
+SMART attributes fall into two categories:
+
+| Type | Examples | Behavior |
+|------|----------|----------|
+| **Critical state** | Reallocated sectors, pending sectors, media errors | Always shown if threshold exceeded |
+| **Cumulative counters** | Command timeouts, unsafe shutdowns, error log entries | Only shown if value increased within delta range |
+
+This reduces noise from old events while highlighting active problems. Select the time range (1 hour to all time) from the History dropdown in the dashboard.
 
 ## Dashboard
 
@@ -151,22 +172,24 @@ The web dashboard provides:
 - **Summary cards** — total, healthy, warning, critical counts (click to filter)
 - **Host groups** — disks grouped by host with drive count, total capacity, and last scan time
 - **Host filter & search** — dropdown and free-text search across all fields
-- **Sortable columns** — device, model, serial, capacity, power-on hours, temperature, status
-- **Detail panel** — click any row to expand; shows sidebar with disk identity (WWN, firmware, RPM, sector size, power cycles, history count) and SMART attribute table with values, deltas, and sparkline trends
-- **Show all attributes** — health attributes shown by default, click anywhere in the attribute area or the link to expand all attributes
-- **Settings panel** — manage monitored hosts (add/remove with last-seen status), SSH user, and threshold presets directly from the UI
+- **Sortable columns** — device, model, serial, capacity, power-on hours, temperature, since, status
+- **Since column** — shows how long this disk has been monitored (minutes, hours, or days)
+- **Detail panel** — click any row to expand; shows sidebar with disk identity and SMART attribute table with values, deltas, and sparkline trends
+- **Show all attributes** — health attributes shown by default, click to expand all attributes
+- **Settings panel** — manage monitored hosts, SSH user, and threshold presets
+- **Threshold editor** — customize warning/critical thresholds per attribute
 - **Dark/light theme** — persisted across reloads
 - **Auto-refresh** — every 60 seconds, preserving scroll position and expanded panels
 
 ### Health Classification
 
-Thresholds are configurable per preset. The default (backblaze) classification:
+Status is determined by visible issues (respecting both threshold preset and delta filter):
 
-| Status | Example triggers |
-|--------|-----------------|
-| **Critical** | SMART status FAILED, Reallocated_Sector_Ct > 100, Temperature > 65°C |
-| **Warning** | Reallocated_Sector_Ct > 0, Command_Timeout > 0, Current_Pending_Sector > 0, Temperature > 55°C |
-| **Healthy** | All checks passed |
+| Status | Condition |
+|--------|-----------|
+| **Critical** | SMART status FAILED, or any critical threshold exceeded |
+| **Warning** | Any warning threshold exceeded (for visible issues) |
+| **Healthy** | No visible issues |
 
 ### Seagate Composite Values
 

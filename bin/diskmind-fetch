@@ -97,6 +97,15 @@ def init_database(db_path: str) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
         CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
         CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
+        
+        CREATE TABLE IF NOT EXISTS host_status (
+            host TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            message TEXT,
+            disk_count INTEGER DEFAULT 0,
+            last_attempt DATETIME,
+            last_success DATETIME
+        );
     ''')
     
     # Migrate from old schema (serial-based primary key)
@@ -163,8 +172,14 @@ def get_local_script_path() -> str:
     return str(candidates[0])
 
 
-def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> list[dict]:
-    """Collect SMART data from a single host via SSH (or locally for localhost)."""
+def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> dict:
+    """Collect SMART data from a single host via SSH (or locally for localhost).
+    
+    Returns dict with:
+        - status: 'ok', 'offline', 'auth_failed', 'timeout', 'no_smartctl', 'no_disks', 'error'
+        - message: Human-readable error message (if any)
+        - readings: List of disk readings (if successful)
+    """
     script_path = get_local_script_path()
     
     # Read script content
@@ -197,15 +212,29 @@ def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> list[dict]:
                 timeout=ssh_timeout + 60
             )
         
+        stderr_lower = result.stderr.lower()
+        
         if result.returncode != 0:
-            error_msg = result.stderr.strip() or result.stdout.strip() or f"Exit code {result.returncode}"
-            print(f"✗ failed: {error_msg}", file=sys.stderr)
-            return []
+            # Classify the error
+            if 'permission denied' in stderr_lower or 'authentication failed' in stderr_lower:
+                return {'status': 'auth_failed', 'message': 'Permission denied', 'readings': []}
+            elif 'connection refused' in stderr_lower:
+                return {'status': 'offline', 'message': 'Connection refused', 'readings': []}
+            elif 'no route to host' in stderr_lower:
+                return {'status': 'offline', 'message': 'No route to host', 'readings': []}
+            elif 'host is down' in stderr_lower or 'host unreachable' in stderr_lower:
+                return {'status': 'offline', 'message': 'Host unreachable', 'readings': []}
+            elif 'name or service not known' in stderr_lower or 'could not resolve' in stderr_lower:
+                return {'status': 'offline', 'message': 'DNS resolution failed', 'readings': []}
+            elif 'smartctl' in stderr_lower and 'not found' in stderr_lower:
+                return {'status': 'no_smartctl', 'message': 'smartctl not installed', 'readings': []}
+            else:
+                error_msg = result.stderr.strip() or result.stdout.strip() or f"Exit code {result.returncode}"
+                return {'status': 'error', 'message': error_msg[:100], 'readings': []}
         
         # Check if output is empty
         if not result.stdout.strip():
-            print(f"✗ failed: No output (smartctl installed? root privileges?)", file=sys.stderr)
-            return []
+            return {'status': 'no_smartctl', 'message': 'No output (smartctl missing or no root)', 'readings': []}
         
         # Parse CSV
         readings = []
@@ -215,20 +244,16 @@ def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> list[dict]:
             readings.append(row)
         
         if not readings:
-            print(f"✗ failed: No disks found", file=sys.stderr)
-            return []
+            return {'status': 'no_disks', 'message': 'No disks found', 'readings': []}
         
-        return readings
+        return {'status': 'ok', 'message': None, 'readings': readings}
         
     except subprocess.TimeoutExpired:
-        print(f"✗ failed: Timeout after {ssh_timeout}s", file=sys.stderr)
-        return []
+        return {'status': 'timeout', 'message': f'Timeout after {ssh_timeout}s', 'readings': []}
     except FileNotFoundError as e:
-        print(f"✗ failed: {e.filename} not found", file=sys.stderr)
-        return []
+        return {'status': 'error', 'message': f'{e.filename} not found', 'readings': []}
     except Exception as e:
-        print(f"✗ failed: {e}", file=sys.stderr)
-        return []
+        return {'status': 'error', 'message': str(e)[:100], 'readings': []}
 
 
 def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: str):
@@ -266,6 +291,30 @@ def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: st
             ))
         except Exception as e:
             print(f"  Warning: Failed to store {r.get('serial')}: {e}", file=sys.stderr)
+    
+    conn.commit()
+
+
+def update_host_status(conn: sqlite3.Connection, host: str, status: str, message: str, disk_count: int, timestamp: str):
+    """Update host status in database."""
+    cursor = conn.cursor()
+    
+    if status == 'ok':
+        cursor.execute('''
+            INSERT OR REPLACE INTO host_status (host, status, message, disk_count, last_attempt, last_success)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (host, status, message, disk_count, timestamp, timestamp))
+    else:
+        # On failure, preserve last_success if it exists
+        cursor.execute('''
+            INSERT INTO host_status (host, status, message, disk_count, last_attempt, last_success)
+            VALUES (?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(host) DO UPDATE SET
+                status = excluded.status,
+                message = excluded.message,
+                disk_count = excluded.disk_count,
+                last_attempt = excluded.last_attempt
+        ''', (host, status, message, disk_count, timestamp))
     
     conn.commit()
 
@@ -330,14 +379,25 @@ def main():
     
     # Settings
     db_path = config.get('database', {}).get('path', './data/smart.db')
-    ssh_user = config.get('ssh', {}).get('user', 'root')
+    default_ssh_user = 'root'
     ssh_timeout = config.get('ssh', {}).get('timeout', 30)
     retention_days = config.get('database', {}).get('retention_days', 365)
+    
+    # Parse hosts - support "user@host" format
+    raw_hosts = config.get('hosts', [])
+    hosts = []
+    for h in raw_hosts:
+        h = str(h).strip()
+        if '@' in h:
+            user, ip = h.split('@', 1)
+            hosts.append({'ip': ip, 'user': user})
+        else:
+            hosts.append({'ip': h, 'user': default_ssh_user})
     
     # Initialize
     print("diskmind-fetch - Data Collection")
     print("=" * 40)
-    print(f"Hosts: {len(config['hosts'])}")
+    print(f"Hosts: {len(hosts)}")
     print(f"Database: {db_path}")
     print()
     
@@ -349,21 +409,29 @@ def main():
     successful_hosts = 0
     
     print("Collecting data:")
-    for host in config['hosts']:
-        print(f"  → {host}...", end=' ', flush=True)
+    for host_info in hosts:
+        host = host_info['ip']
+        ssh_user = host_info['user']
+        user_hint = f" ({ssh_user})" if ssh_user != 'root' else ''
+        print(f"  → {host}{user_hint}...", end=' ', flush=True)
         
-        readings = collect_from_host(host, ssh_user, ssh_timeout)
+        result = collect_from_host(host, ssh_user, ssh_timeout)
+        readings = result['readings']
         
-        if readings:
+        # Update host status in DB
+        update_host_status(conn, host, result['status'], result['message'], len(readings), timestamp)
+        
+        if result['status'] == 'ok':
             store_readings(conn, readings, timestamp)
             total_disks += len(readings)
             successful_hosts += 1
             print(f"✓ {len(readings)} disks")
         else:
-            print("✗ failed")
+            msg = result['message'] or result['status']
+            print(f"✗ {msg}")
     
     print()
-    print(f"Collected: {total_disks} disks from {successful_hosts}/{len(config['hosts'])} hosts")
+    print(f"Collected: {total_disks} disks from {successful_hosts}/{len(hosts)} hosts")
     
     # Cleanup old data
     if retention_days > 0:

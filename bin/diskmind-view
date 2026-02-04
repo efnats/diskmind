@@ -194,6 +194,34 @@ def get_hosts(db_path: str) -> list[str]:
     return hosts
 
 
+def get_host_status(db_path: str) -> dict:
+    """Get host status from host_status table."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    
+    # Check if table exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='host_status'")
+    if not cursor.fetchone():
+        conn.close()
+        return {}
+    
+    cursor.execute('''
+        SELECT host, status, message, disk_count, last_attempt, last_success
+        FROM host_status
+    ''')
+    result = {}
+    for row in cursor.fetchall():
+        result[row['host']] = {
+            'status': row['status'],
+            'message': row['message'],
+            'disk_count': row['disk_count'],
+            'last_attempt': row['last_attempt'],
+            'last_success': row['last_success'],
+        }
+    conn.close()
+    return result
+
+
 def get_host_stats(db_path: str) -> dict:
     """Get per-host last scan time and disk count."""
     conn = get_db_connection(db_path)
@@ -926,24 +954,85 @@ def get_html_template() -> str:
         .filter-group-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
         .info-icon { cursor: help; opacity: 0.6; font-size: 11px; position: relative; }
         .info-icon:hover { opacity: 1; }
-        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: #1a1a2e; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: nowrap; max-width: 280px; white-space: normal; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); line-height: 1.4; }
+        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: #1a1a2e; color: #e2e8f0; padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; width: max-content; max-width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); line-height: 1.5; }
         [data-theme="dark"] .info-icon:hover::after { background: #2a3a52; }
         .filter-group-controls { display: flex; align-items: center; gap: 6px; }
         .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
-        .filter-group-controls > input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
+        .filter-group-controls > input:not(.search-input) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
+        .filter-group-end { margin-left: auto; }
+        .search-input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
+        .search-input:focus { outline: none; border-color: var(--accent); }
+        
+        /* Custom Dropdown */
+        .custom-select { position: relative; min-width: 120px; }
+        .custom-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; cursor: pointer; transition: all 0.15s; user-select: none; }
+        .custom-select-trigger:hover { border-color: var(--text-muted); }
+        .custom-select.open .custom-select-trigger { border-color: var(--accent); }
+        .custom-select-arrow { font-size: 10px; color: var(--text-muted); transition: transform 0.2s; }
+        .custom-select.open .custom-select-arrow { transform: rotate(180deg); }
+        .custom-select-options { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1000; opacity: 0; visibility: hidden; transform: translateY(-8px); transition: all 0.15s ease; max-height: 240px; overflow-y: auto; }
+        .custom-select.open .custom-select-options { opacity: 1; visibility: visible; transform: translateY(0); }
+        .custom-select-option { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background 0.1s; }
+        .custom-select-option:hover { background: var(--bg-hover); }
+        .custom-select-option.selected { color: var(--accent); }
+        .custom-select-option.selected::before { content: '✓'; font-size: 11px; }
+        .custom-select-option:not(.selected)::before { content: ''; width: 11px; }
+        .custom-select-option:first-child { border-radius: 5px 5px 0 0; }
+        .custom-select-option:last-child { border-radius: 0 0 5px 5px; }
+        
         .edit-thresholds-btn { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; }
         .edit-thresholds-btn:hover { background: var(--bg-secondary); color: var(--text-primary); }
+        .host-toolbar-btn { width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+        .host-toolbar-btn:hover { background: var(--bg-secondary); color: var(--text-primary); border-color: var(--text-muted); }
+        .host-toolbar-btn.spinning { animation: spin 1s linear infinite; pointer-events: none; }
+        .add-host-inline { display: flex; align-items: center; }
+        .add-host-input-group { display: flex; align-items: center; gap: 4px; }
+        .add-host-input { padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; width: 150px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .add-host-input.add-host-user { width: 70px; }
+        .add-host-at { color: var(--text-muted); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .add-host-input:focus { outline: none; }
+        .add-host-confirm { padding: 6px 8px; border: none; border-radius: 6px; background: var(--success); color: white; font-size: 12px; cursor: pointer; }
+        .add-host-confirm:hover { opacity: 0.9; }
+        .add-host-cancel { padding: 6px 8px; border: none; border-radius: 6px; background: var(--bg-secondary); color: var(--text-muted); font-size: 12px; cursor: pointer; }
+        .add-host-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
         select, input[type="text"] { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
         .checkbox-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
         
         .host-group { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
         .host-header { padding: 12px 16px; background: var(--bg-hover); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .host-name { font-size: 14px; font-weight: 600; }
+        .host-name-display { font-size: 14px; font-weight: 600; }
+        .host-user { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+        .host-edit-form { display: inline-flex; align-items: center; gap: 4px; }
+        .host-edit-input { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .host-edit-input:focus { outline: none; border-color: var(--accent); }
+        .host-edit-input.host-edit-user { width: 60px; }
+        .host-edit-input.host-edit-ip { width: 120px; }
+        .host-edit-at { color: var(--text-muted); font-size: 12px; }
+        .host-edit-confirm { padding: 4px 8px; border: none; border-radius: 4px; background: var(--success); color: white; font-size: 12px; cursor: pointer; }
+        .host-edit-confirm:hover { opacity: 0.9; }
+        .host-edit-cancel { padding: 4px 8px; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-muted); font-size: 12px; cursor: pointer; }
+        .host-edit-cancel:hover { background: var(--bg-hover); color: var(--text-primary); }
         .host-badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 500; margin-left: 12px; }
         .host-badge.ok { background: rgba(16,185,129,0.1); color: var(--success); }
         .host-badge.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
         .host-badge.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
-        .host-stats { font-size: 12px; color: var(--text-muted); }
+        .host-badge.offline { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+        .host-badge.pending { background: rgba(59,130,246,0.1); color: var(--accent); }
+        .host-group.host-error { opacity: 0.7; }
+        .host-group.host-error .host-header { cursor: default; }
+        .host-group.host-error .host-name { color: var(--text-secondary); }
+        .host-stats { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
+        .host-actions { display: flex; gap: 4px; margin-left: 12px; }
+        .host-action-btn { padding: 0 8px; height: 24px; border: none; border-radius: 4px; background: var(--bg-primary); color: var(--text-muted); cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; white-space: nowrap; }
+        .host-action-btn.reload { font-size: 14px; }
+        .host-action-btn.reload:hover { background: rgba(59,130,246,0.15); color: var(--accent); }
+        .host-action-btn.reload.spinning { animation: spin 1s linear infinite; pointer-events: none; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .host-action-btn.edit:hover { background: rgba(59,130,246,0.15); color: var(--accent); }
+        .host-action-btn.delete:hover { background: rgba(239,68,68,0.15); color: var(--danger); }
+        .host-action-btn.confirming { background: var(--danger); color: white; padding: 0 10px; font-weight: 500; }
+        .host-action-btn.confirming:hover { background: #dc2626; }
         .host-toggle { transition: transform 0.2s; }
         .host-group.collapsed .host-toggle { transform: rotate(-90deg); }
         .host-group.collapsed .host-content { display: none; }
@@ -1137,22 +1226,18 @@ def get_html_template() -> str:
         <div id="error" class="error" style="display: none;"></div>
         
         <div id="settingsOverlay" class="settings-overlay" style="display:none;" onclick="if(event.target===this)toggleSettings()">
-            <div class="settings-panel">
+            <div class="settings-panel" style="width: 320px;">
                 <div class="settings-header">
                     <h2>Settings</h2>
                     <button class="settings-close" onclick="toggleSettings()">✕</button>
                 </div>
                 <div class="settings-body">
-                    <div class="settings-section-title">Hosts</div>
-                    <p class="settings-section-hint">Hosts to collect SMART data from via SSH.</p>
-                    <div id="hostsList" class="hosts-editor">Loading...</div>
-                    <div class="hosts-actions">
-                        <input type="text" id="hostInput" class="host-input" placeholder="IP or hostname" onkeydown="if(event.key==='Enter'){addHost();event.preventDefault()}">
-                        <button class="host-add-btn" onclick="addHost()">Add</button>
-                    </div>
-                    <div class="settings-section-title" style="margin-top:16px">SSH User</div>
-                    <p class="settings-section-hint">User for SSH connections to remote hosts.</p>
-                    <input type="text" id="sshUserInput" class="host-input" style="width:160px" onchange="saveSshUser()">
+                    <div class="settings-section-title">Temperature Unit</div>
+                    <p class="settings-section-hint">Display temperatures in Celsius or Fahrenheit.</p>
+                    <select id="tempUnitSelect" class="host-input" style="width:100%" onchange="saveTempUnit()">
+                        <option value="C">Celsius (°C)</option>
+                        <option value="F">Fahrenheit (°F)</option>
+                    </select>
                 </div>
             </div>
         </div>
@@ -1217,52 +1302,95 @@ def get_html_template() -> str:
         
         <div class="filters">
             <div class="filter-group-labeled">
-                <span class="filter-group-label">Filter</span>
+                <span class="filter-group-label">Disks</span>
                 <div class="filter-group-controls">
-                    <select id="hostFilter" onchange="applyFilters()">
-                        <option value="">All Hosts</option>
-                    </select>
-                    <select id="typeFilter" onchange="applyFilters()">
-                        <option value="">All Types</option>
-                        <option value="HDD">HDD</option>
-                        <option value="SSD">SSD</option>
-                        <option value="NVMe">NVMe</option>
-                    </select>
+                    <div class="custom-select" id="typeFilterWrapper">
+                        <div class="custom-select-trigger" onclick="toggleDropdown('typeFilterWrapper')">
+                            <span class="custom-select-value">All Types</span>
+                            <span class="custom-select-arrow">▼</span>
+                        </div>
+                        <div class="custom-select-options">
+                            <div class="custom-select-option selected" data-value="">All Types</div>
+                            <div class="custom-select-option" data-value="HDD">HDD</div>
+                            <div class="custom-select-option" data-value="SSD">SSD</div>
+                            <div class="custom-select-option" data-value="NVMe">NVMe</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="typeFilter" value="">
                     <input type="text" id="search" placeholder="Search..." onkeyup="applyFilters()">
                 </div>
             </div>
             <div class="filter-separator"></div>
             <div class="filter-group-labeled">
-                <span class="filter-group-label">Thresholds <span class="info-icon" data-tip="Warning/critical thresholds for SMART values. Relaxed = fewer alerts, Backblaze = industry standard based on 300k+ drives.">ⓘ</span></span>
+                <span class="filter-group-label">Thresholds <span class="info-icon" data-tip="Warning/critical limits for SMART values. Click ⚙ for details.">ⓘ</span></span>
                 <div class="filter-group-controls">
-                    <select id="presetFilter" onchange="changePreset(this.value)">
-                        <option value="relaxed">Relaxed</option>
-                        <option value="conservative">Conservative</option>
-                        <option value="backblaze">Backblaze</option>
-                        <option value="custom">Custom</option>
-                    </select>
+                    <div class="custom-select" id="presetFilterWrapper">
+                        <div class="custom-select-trigger" onclick="toggleDropdown('presetFilterWrapper')">
+                            <span class="custom-select-value">Backblaze</span>
+                            <span class="custom-select-arrow">▼</span>
+                        </div>
+                        <div class="custom-select-options">
+                            <div class="custom-select-option" data-value="relaxed">Relaxed</div>
+                            <div class="custom-select-option" data-value="conservative">Conservative</div>
+                            <div class="custom-select-option selected" data-value="backblaze">Backblaze</div>
+                            <div class="custom-select-option" data-value="custom">Custom</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="presetFilter" value="backblaze">
                     <button class="edit-thresholds-btn" onclick="toggleThresholdEditor()" title="Edit thresholds">⚙</button>
                 </div>
             </div>
             <div class="filter-separator"></div>
             <div class="filter-group-labeled">
-                <span class="filter-group-label">History <span class="info-icon" data-tip="Time range for detecting new issues. Event counters (timeouts, errors) only show as issues if they increased within this period.">ⓘ</span></span>
+                <span class="filter-group-label">History <span class="info-icon" data-tip="Time range for issue detection. Event counters only alert if they increased within this period.">ⓘ</span></span>
                 <div class="filter-group-controls">
-                    <select id="deltaRange" onchange="updateDeltaFromDropdown(this.value)">
-                        <option value="1h">Δ 1 hour</option>
-                        <option value="24h">Δ 24 hours</option>
-                        <option value="7d" selected>Δ 7 days</option>
-                        <option value="30d">Δ 30 days</option>
-                        <option value="90d">Δ 90 days</option>
-                        <option value="all">Δ all time</option>
-                    </select>
+                    <div class="custom-select" id="deltaRangeWrapper">
+                        <div class="custom-select-trigger" onclick="toggleDropdown('deltaRangeWrapper')">
+                            <span class="custom-select-value">7 days</span>
+                            <span class="custom-select-arrow">▼</span>
+                        </div>
+                        <div class="custom-select-options">
+                            <div class="custom-select-option" data-value="1h">1 hour</div>
+                            <div class="custom-select-option" data-value="24h">24 hours</div>
+                            <div class="custom-select-option selected" data-value="7d">7 days</div>
+                            <div class="custom-select-option" data-value="30d">30 days</div>
+                            <div class="custom-select-option" data-value="90d">90 days</div>
+                            <div class="custom-select-option" data-value="all">all time</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="deltaRange" value="7d">
+                </div>
+            </div>
+            <div class="filter-separator"></div>
+            <div class="filter-group-labeled">
+                <span class="filter-group-label">Hosts</span>
+                <div class="filter-group-controls">
+                    <div class="custom-select" id="hostFilterWrapper">
+                        <div class="custom-select-trigger" onclick="toggleDropdown('hostFilterWrapper')">
+                            <span class="custom-select-value">All Hosts</span>
+                            <span class="custom-select-arrow">▼</span>
+                        </div>
+                        <div class="custom-select-options">
+                            <div class="custom-select-option selected" data-value="">All Hosts</div>
+                        </div>
+                    </div>
+                    <input type="hidden" id="hostFilter" value="">
+                    <button class="host-toolbar-btn" onclick="refreshAllHosts()" title="Fetch SMART data">↻</button>
+                    <button id="addHostBtn" class="host-toolbar-btn" onclick="showAddHostInput()" title="Add host">+</button>
+                </div>
+                <div id="addHostInline" class="add-host-input-group" style="display:none;">
+                    <input type="text" id="addHostUser" class="add-host-input add-host-user" placeholder="user" title="SSH user (leave empty for root)">
+                    <span class="add-host-at">@</span>
+                    <input type="text" id="addHostInput" class="add-host-input" placeholder="IP or hostname" onkeydown="handleAddHostKey(event)">
+                    <button class="add-host-confirm" onclick="addHostFromInput()">✓</button>
+                    <button class="add-host-cancel" onclick="hideAddHostInput()">✕</button>
                 </div>
             </div>
         </div>
         
         <div id="content"><div class="loading">Loading...</div></div>
         
-        <footer class="footer">diskmind</footer>
+        <footer class="footer">diskmind v1.4</footer>
     </div>
     
     <script>
@@ -1271,6 +1399,7 @@ def get_html_template() -> str:
     let statusFilter = '';
     let deltaRangeDays = 30;
     let settingsData = null;
+    let tempUnit = 'C'; // 'C' for Celsius, 'F' for Fahrenheit
 
     // Health-relevant attributes by type (order matters - shown first)
     // Attribute descriptions for tooltips
@@ -1353,6 +1482,20 @@ def get_html_template() -> str:
     function getTemp(attrs) {
         for (const k of TEMP_KEYS) { if (attrs[k] != null) return attrs[k]; }
         return null;
+    }
+    
+    function formatTemp(celsius) {
+        if (celsius == null || celsius === '-') return '-';
+        const c = parseInt(celsius);
+        if (isNaN(c)) return '-';
+        if (tempUnit === 'F') {
+            return Math.round(c * 9/5 + 32);
+        }
+        return c;
+    }
+    
+    function getTempSymbol() {
+        return tempUnit === 'F' ? '°F' : '°C';
     }
 
     function fmtHours(h) {
@@ -1445,6 +1588,94 @@ def get_html_template() -> str:
         if (spec.extract === 'low16') return raw & 0xFFFF;
         if (spec.extract === 'high16') return (raw >> 32) & 0xFFFF;
         return raw;
+    }
+    
+    // Custom dropdown functions
+    function toggleDropdown(wrapperId) {
+        const wrapper = document.getElementById(wrapperId);
+        const wasOpen = wrapper.classList.contains('open');
+        
+        // Close all dropdowns
+        document.querySelectorAll('.custom-select.open').forEach(el => el.classList.remove('open'));
+        
+        // Toggle this one
+        if (!wasOpen) {
+            wrapper.classList.add('open');
+        }
+    }
+    
+    function selectOption(wrapperId, value, label, callback) {
+        const wrapper = document.getElementById(wrapperId);
+        const hiddenInput = wrapper.nextElementSibling;
+        const valueDisplay = wrapper.querySelector('.custom-select-value');
+        
+        // Update hidden input
+        if (hiddenInput && hiddenInput.tagName === 'INPUT') {
+            hiddenInput.value = value;
+        }
+        
+        // Update displayed value
+        valueDisplay.textContent = label;
+        
+        // Update selected state
+        wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.value === value);
+        });
+        
+        // Close dropdown
+        wrapper.classList.remove('open');
+        
+        // Execute callback
+        if (callback) callback(value);
+    }
+    
+    function initDropdowns() {
+        // Add click handlers to all options
+        document.querySelectorAll('.custom-select-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const wrapper = opt.closest('.custom-select');
+                const value = opt.dataset.value;
+                const label = opt.textContent;
+                
+                // Determine callback based on wrapper id
+                let callback = null;
+                if (wrapper.id === 'typeFilterWrapper') callback = applyFilters;
+                else if (wrapper.id === 'presetFilterWrapper') callback = (v) => changePreset(v);
+                else if (wrapper.id === 'deltaRangeWrapper') callback = (v) => updateDeltaFromDropdown(v);
+                else if (wrapper.id === 'hostFilterWrapper') callback = applyFilters;
+                
+                selectOption(wrapper.id, value, label, callback);
+            });
+        });
+        
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.custom-select')) {
+                document.querySelectorAll('.custom-select.open').forEach(el => el.classList.remove('open'));
+            }
+        });
+    }
+    
+    function setDropdownValue(wrapperId, value) {
+        const wrapper = document.getElementById(wrapperId);
+        if (!wrapper) return;
+        
+        const option = wrapper.querySelector(`.custom-select-option[data-value="${value}"]`);
+        if (option) {
+            const label = option.textContent;
+            const valueDisplay = wrapper.querySelector('.custom-select-value');
+            const hiddenInput = wrapper.nextElementSibling;
+            
+            if (hiddenInput && hiddenInput.tagName === 'INPUT') {
+                hiddenInput.value = value;
+            }
+            valueDisplay.textContent = label;
+            
+            wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
+                opt.classList.toggle('selected', opt.dataset.value === value);
+            });
+        }
     }
     
     // Format time duration: <1h = Xmin, <1d = Xh, else Xd
@@ -1649,78 +1880,179 @@ def get_html_template() -> str:
         document.getElementById('statCapacity').textContent = (data.stats.total_capacity_tb || 0) + ' TB';
         document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
         
-        // Update host filter
+        // Update host filter dropdown
         const hostFilter = document.getElementById('hostFilter');
         const currentHost = hostFilter.value;
-        hostFilter.innerHTML = '<option value="">All Hosts</option>' + 
-            data.hosts.map(h => `<option value="${h}">${h}</option>`).join('');
-        hostFilter.value = currentHost;
+        const hostWrapper = document.getElementById('hostFilterWrapper');
+        const hostOptions = hostWrapper.querySelector('.custom-select-options');
+        hostOptions.innerHTML = `<div class="custom-select-option${!currentHost ? ' selected' : ''}" data-value="">All Hosts</div>` +
+            data.hosts.map(h => `<div class="custom-select-option${h === currentHost ? ' selected' : ''}" data-value="${h}">${h}</div>`).join('');
         
-        // Group by host
+        // Re-attach click handlers for new options
+        hostOptions.querySelectorAll('.custom-select-option').forEach(opt => {
+            opt.addEventListener('click', (e) => {
+                e.stopPropagation();
+                selectOption('hostFilterWrapper', opt.dataset.value, opt.textContent, applyFilters);
+            });
+        });
+        
+        // Group disks by host
         const byHost = {};
         data.disks.forEach(d => {
             if (!byHost[d.host]) byHost[d.host] = [];
             byHost[d.host].push(d);
         });
         
-        // Render hosts
+        // Get host_status from API response
+        const hostStatus = data.host_status || {};
+        
+        // Build map of IP -> full config entry (user@host or just host)
+        const hostConfigMap = {};
+        (settingsData?.hosts || []).forEach(h => {
+            const ip = h.includes('@') ? h.split('@')[1] : h;
+            hostConfigMap[ip] = h;
+        });
+        
+        // Helper to get user for a host
+        const getHostUser = (host) => {
+            const entry = hostConfigMap[host] || host;
+            return entry.includes('@') ? entry.split('@')[0] : null;
+        };
+        
+        // Render hosts (all configured hosts, even those without disks)
         let html = '';
-        for (const [host, disks] of Object.entries(byHost)) {
-            const critical = disks.filter(d => d.status === 'critical').length;
-            const warning = disks.filter(d => d.status === 'warning').length;
-            const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
+        for (const host of data.hosts) {
+            const disks = byHost[host] || [];
+            const status = hostStatus[host] || {};
+            const hasDisks = disks.length > 0;
+            const hostUser = getHostUser(host);
+            const fullHostEntry = hostConfigMap[host] || host;
             
-            // Find most recent scan timestamp for this host
-            let lastScan = '';
-            const timestamps = disks.map(d => d.timestamp).filter(Boolean).sort();
-            if (timestamps.length > 0) {
-                const ts = timestamps[timestamps.length - 1];
-                const d = new Date(ts.replace(' ', 'T') + 'Z');
-                const now = new Date();
-                const sec = Math.floor((now - d) / 1000);
-                if (sec < 60) lastScan = 'just now';
-                else if (sec < 3600) lastScan = Math.floor(sec / 60) + 'm ago';
-                else if (sec < 86400) lastScan = Math.floor(sec / 3600) + 'h ago';
-                else lastScan = Math.floor(sec / 86400) + 'd ago';
-            }
+            // User display (small text if != root)
+            const userDisplay = hostUser ? `<span class="host-user">${hostUser}@</span>` : '';
             
-            let badge = '<span class="host-badge ok">OK</span>';
-            if (critical > 0) badge = `<span class="host-badge critical">${critical} critical</span>`;
-            else if (warning > 0) badge = `<span class="host-badge warning">${warning} warning</span>`;
-            
-            html += `<div class="host-group" data-host="${host}">
-                <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
-                    <div><span class="host-name">${host}</span>${badge}</div>
-                    <div class="host-stats">${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''} <span class="host-toggle">▼</span></div>
-                </div>
-                <div class="host-content">
-                    <table class="disk-table">
-                        <colgroup>
-                            <col style="width: 140px">
-                            <col style="width: 240px">
-                            <col style="width: 150px">
-                            <col style="width: 80px">
-                            <col style="width: 80px">
-                            <col style="width: 65px">
-                            <col style="width: 65px">
-                            <col style="width: 100px">
-                            <col>
-                        </colgroup>
-                        <thead><tr>
-                            <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('temp')">Temp <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('since')">Since <span class="sort-icon">⇅</span></th>
-                            <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
-                            <th>Issues</th>
-                        </tr></thead>
-                        <tbody>${sortedDisks(disks).map(d => renderDisk(d)).join('')}</tbody>
-                    </table>
-                </div>
+            // Inline edit form (hidden by default, replaces host name when editing)
+            const hostEditForm = `<div class="host-edit-form" id="hostEdit-${host.replace(/\./g, '-')}" style="display:none;">
+                <input type="text" class="host-edit-input host-edit-user" value="${hostUser || ''}" placeholder="user">
+                <span class="host-edit-at">@</span>
+                <input type="text" class="host-edit-input host-edit-ip" value="${host}">
+                <button class="host-edit-confirm" onclick="event.stopPropagation();saveHostEdit('${host}')">✓</button>
+                <button class="host-edit-cancel" onclick="event.stopPropagation();hideHostEdit('${host}')">✕</button>
             </div>`;
+            
+            // Host actions (reload, edit, remove buttons)
+            const hostActions = `
+                <div class="host-actions">
+                    <button class="host-action-btn reload" onclick="event.stopPropagation();rescanHost('${fullHostEntry}')" title="Rescan host">↻</button>
+                    <button class="host-action-btn edit" onclick="event.stopPropagation();showHostEdit('${host}')" title="Edit host">✎</button>
+                    <button class="host-action-btn delete" onclick="event.stopPropagation();removeHostByName('${fullHostEntry}')" title="Remove host">✕</button>
+                </div>`;
+            
+            if (hasDisks) {
+                // Normal host with disks
+                const critical = disks.filter(d => d.status === 'critical').length;
+                const warning = disks.filter(d => d.status === 'warning').length;
+                const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
+                
+                // Find most recent scan timestamp for this host
+                let lastScan = '';
+                const timestamps = disks.map(d => d.timestamp).filter(Boolean).sort();
+                if (timestamps.length > 0) {
+                    const ts = timestamps[timestamps.length - 1];
+                    const d = new Date(ts.replace(' ', 'T') + 'Z');
+                    const now = new Date();
+                    const sec = Math.floor((now - d) / 1000);
+                    if (sec < 60) lastScan = 'just now';
+                    else if (sec < 3600) lastScan = Math.floor(sec / 60) + 'm ago';
+                    else if (sec < 86400) lastScan = Math.floor(sec / 3600) + 'h ago';
+                    else lastScan = Math.floor(sec / 86400) + 'd ago';
+                }
+                
+                let badge = '<span class="host-badge ok">OK</span>';
+                if (critical > 0) badge = `<span class="host-badge critical">${critical} critical</span>`;
+                else if (warning > 0) badge = `<span class="host-badge warning">${warning} warning</span>`;
+                
+                html += `<div class="host-group" data-host="${host}">
+                    <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                        <div>
+                            <span class="host-name-display" id="hostDisplay-${host.replace(/\./g, '-')}">${userDisplay}${host}</span>
+                            ${hostEditForm}
+                            ${badge}
+                        </div>
+                        <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span>${hostActions}<span class="host-toggle">▼</span></div>
+                    </div>
+                    <div class="host-content">
+                        <table class="disk-table">
+                            <colgroup>
+                                <col style="width: 120px">
+                                <col style="width: 60px">
+                                <col style="width: 240px">
+                                <col style="width: 150px">
+                                <col style="width: 80px">
+                                <col style="width: 80px">
+                                <col style="width: 60px">
+                                <col style="width: 60px">
+                                <col style="width: 60px">
+                                <col style="width: 100px">
+                                <col>
+                            </colgroup>
+                            <thead><tr>
+                                <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('type')">Type <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('temp')">${getTempSymbol()} <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('since')">Since <span class="info-icon" data-tip="Time since first scan of this disk. Shows how long we have historical data.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('last')">Last <span class="info-icon" data-tip="Time since last scan. Shows how current the data is.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
+                                <th>Issues</th>
+                            </tr></thead>
+                            <tbody>${sortedDisks(disks).map(d => renderDisk(d)).join('')}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+            } else {
+                // Host without disks - show status
+                const statusLabels = {
+                    'pending': { badge: 'pending', text: 'Pending' },
+                    'offline': { badge: 'offline', text: 'Offline' },
+                    'auth_failed': { badge: 'offline', text: 'Auth failed' },
+                    'timeout': { badge: 'offline', text: 'Timeout' },
+                    'no_smartctl': { badge: 'warning', text: 'No smartctl' },
+                    'no_disks': { badge: 'warning', text: 'No disks' },
+                    'error': { badge: 'offline', text: 'Error' },
+                };
+                const statusInfo = statusLabels[status.status] || { badge: 'offline', text: status.status || 'Unknown' };
+                const badge = `<span class="host-badge ${statusInfo.badge}">${statusInfo.text}</span>`;
+                
+                // Format last attempt time
+                let lastAttempt = '';
+                if (status.last_attempt) {
+                    const d = new Date(status.last_attempt.replace(' ', 'T') + 'Z');
+                    const now = new Date();
+                    const sec = Math.floor((now - d) / 1000);
+                    if (sec < 60) lastAttempt = 'just now';
+                    else if (sec < 3600) lastAttempt = Math.floor(sec / 60) + 'm ago';
+                    else if (sec < 86400) lastAttempt = Math.floor(sec / 3600) + 'h ago';
+                    else lastAttempt = Math.floor(sec / 86400) + 'd ago';
+                }
+                
+                const message = status.message || '';
+                const statusText = message + (lastAttempt ? ` · ${lastAttempt}` : '');
+                
+                html += `<div class="host-group host-error" data-host="${host}">
+                    <div class="host-header">
+                        <div>
+                            <span class="host-name-display" id="hostDisplay-${host.replace(/\./g, '-')}">${userDisplay}${host}</span>
+                            ${hostEditForm}
+                            ${badge}
+                        </div>
+                        <div class="host-stats"><span>${statusText || 'Never scanned'}</span>${hostActions}</div>
+                    </div>
+                </div>`;
+            }
         }
         
         document.getElementById('content').innerHTML = html || '<div class="loading">No data available</div>';
@@ -1750,8 +2082,8 @@ def get_html_template() -> str:
         // Hours & temp for main table row
         let hours = parseInt(attrs.Power_On_Hours || attrs.Power_On_Hours_and_Msec || 0);
         const hoursFmt = fmtHours(hours);
-        let temp = getTemp(attrs);
-        temp = temp != null ? temp : '-';
+        let tempRaw = getTemp(attrs);
+        let temp = formatTemp(tempRaw);
         const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
 
         // Calculate data availability (time since first reading)
@@ -1781,6 +2113,23 @@ def get_html_template() -> str:
                 sinceClass = 'since-incomplete';
                 const filterStr = deltaRangeDays < 1 ? Math.round(deltaRangeDays * 24) + ' hours' : Math.round(deltaRangeDays) + ' days';
                 sinceTooltip = `Only ${sinceText} of data, filter requests ${filterStr}`;
+            }
+        }
+
+        // Last cell - show time since last scan
+        let lastText = '-';
+        if (d.timestamp) {
+            const lastScan = new Date(d.timestamp.replace(' ', 'T') + 'Z');
+            const lastMs = new Date() - lastScan;
+            const lastMinutes = lastMs / 60000;
+            const lastHours = lastMs / 3600000;
+            const lastDays = lastMs / 86400000;
+            if (lastDays >= 1) {
+                lastText = Math.floor(lastDays) + 'd';
+            } else if (lastHours >= 1) {
+                lastText = Math.floor(lastHours) + 'h';
+            } else {
+                lastText = Math.max(1, Math.floor(lastMinutes)) + 'min';
             }
         }
 
@@ -1884,18 +2233,20 @@ def get_html_template() -> str:
         }
 
         return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${eid}')">
-            <td><span class="device-name">${d.device}</span><span class="type-badge ${typeClass}">${d.type}</span></td>
+            <td><span class="device-name">${d.device}</span></td>
+            <td><span class="type-badge ${typeClass}">${d.type}</span></td>
             <td>${d.model || '-'}</td>
             <td class="mono muted">${d.serial}</td>
             <td>${capacity}</td>
             <td class="mono">${hoursFmt}${trend}</td>
-            <td>${temp}°</td>
+            <td>${temp !== '-' ? temp + '°' : '-'}</td>
             <td class="${sinceClass}"${sinceTooltip ? ` title="${sinceTooltip}"` : ''}>${sinceText}</td>
+            <td>${lastText}</td>
             <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
             <td>${issues || '-'}</td>
         </tr>
         <tr class="detail-row" id="detail-${eid}">
-            <td colspan="9">
+            <td colspan="11">
                 <div class="detail-panel">
                     <div class="detail-sidebar">${sbHtml}</div>
                     <div class="detail-main">
@@ -2004,11 +2355,9 @@ def get_html_template() -> str:
             if (saved) preset = saved;
         }
         
-        const dropdown = document.getElementById('deltaRange');
-        if (dropdown) {
-            dropdown.value = preset;
-            deltaRangeDays = DELTA_PRESETS[preset] || 7;
-        }
+        setDropdownValue('deltaRangeWrapper', preset);
+        document.getElementById('deltaRange').value = preset;
+        deltaRangeDays = DELTA_PRESETS[preset] || 7;
     }
     
     let currentSort = {field: 'device', asc: true};
@@ -2038,9 +2387,10 @@ def get_html_template() -> str:
         const attrs = disk.smart_attributes || {};
         switch(field) {
             case 'device':
-                // Type order + device name for default sort
+                return disk.device || '';
+            case 'type':
                 const typeOrder = {'NVMe': 0, 'SSD': 1, 'HDD': 2, 'Unknown': 3};
-                return (typeOrder[disk.type] ?? 3) * 1000 + disk.device;
+                return typeOrder[disk.type] ?? 3;
             case 'model': return disk.model || '';
             case 'serial': return disk.serial || '';
             case 'size': return disk.capacity_bytes || 0;
@@ -2051,6 +2401,8 @@ def get_html_template() -> str:
                 const hist = historyCache[diskId] || {};
                 const first = hist._first || '';
                 return first ? new Date(first).getTime() : 0;
+            case 'last':
+                return disk.timestamp ? new Date(disk.timestamp.replace(' ', 'T') + 'Z').getTime() : 0;
             case 'status': 
                 const statusOrder = {'critical': 0, 'warning': 1, 'ok': 2};
                 return statusOrder[disk.status] ?? 2;
@@ -2103,7 +2455,8 @@ def get_html_template() -> str:
             const res = await fetch('/api/settings');
             settingsData = await res.json();
             renderHosts();
-            document.getElementById('sshUserInput').value = settingsData.ssh_user || 'root';
+            tempUnit = settingsData.temp_unit || 'C';
+            document.getElementById('tempUnitSelect').value = tempUnit;
             updatePresetDropdown();
         } catch (e) {
             console.error('Failed to load settings:', e);
@@ -2181,6 +2534,253 @@ def get_html_template() -> str:
         } catch (e) { console.error('Failed to remove host:', e); }
     }
     
+    async function removeHostByName(hostname) {
+        const btn = event.target;
+        
+        // First click: show confirmation state
+        if (!btn.classList.contains('confirming')) {
+            btn.classList.add('confirming');
+            btn.innerHTML = 'Remove?';
+            btn.title = 'Click again to confirm';
+            
+            // Click anywhere else cancels
+            const cancelHandler = (e) => {
+                if (e.target !== btn) {
+                    btn.classList.remove('confirming');
+                    btn.innerHTML = '✕';
+                    btn.title = 'Remove host';
+                    document.removeEventListener('click', cancelHandler, true);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', cancelHandler, true), 0);
+            return;
+        }
+        
+        // Second click: actually remove
+        btn.classList.remove('confirming');
+        btn.innerHTML = '...';
+        
+        const hosts = (settingsData.hosts || []).filter(h => h !== hostname);
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hosts})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.hosts = result.hosts || hosts;
+                await loadData();
+            }
+        } catch (e) { 
+            console.error('Failed to remove host:', e);
+            btn.innerHTML = '✕';
+        }
+    }
+    
+    function showHostEdit(hostIp) {
+        const id = hostIp.replace(/\./g, '-');
+        const display = document.getElementById('hostDisplay-' + id);
+        const form = document.getElementById('hostEdit-' + id);
+        if (display && form) {
+            display.style.display = 'none';
+            form.style.display = 'inline-flex';
+            form.querySelector('.host-edit-ip').focus();
+        }
+    }
+    
+    function hideHostEdit(hostIp) {
+        const id = hostIp.replace(/\./g, '-');
+        const display = document.getElementById('hostDisplay-' + id);
+        const form = document.getElementById('hostEdit-' + id);
+        if (display && form) {
+            display.style.display = '';
+            form.style.display = 'none';
+        }
+    }
+    
+    async function saveHostEdit(oldIp) {
+        const id = oldIp.replace(/\./g, '-');
+        const form = document.getElementById('hostEdit-' + id);
+        if (!form) return;
+        
+        const newUser = form.querySelector('.host-edit-user').value.trim();
+        const newIp = form.querySelector('.host-edit-ip').value.trim();
+        
+        if (!newIp) {
+            hideHostEdit(oldIp);
+            return;
+        }
+        
+        // Find current entry in config
+        const hosts = [...(settingsData.hosts || [])];
+        const idx = hosts.findIndex(h => {
+            const ip = h.includes('@') ? h.split('@')[1] : h;
+            return ip === oldIp;
+        });
+        if (idx === -1) return;
+        
+        // Build new entry
+        const newEntry = newUser && newUser !== 'root'
+            ? `${newUser}@${newIp}`
+            : newIp;
+        
+        if (newEntry === hosts[idx]) {
+            hideHostEdit(oldIp);
+            return; // No change
+        }
+        
+        hosts[idx] = newEntry;
+        
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hosts})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.hosts = result.hosts || hosts;
+                await loadData();
+            }
+        } catch (e) {
+            console.error('Failed to update host:', e);
+            hideHostEdit(oldIp);
+        }
+    }
+    
+    async function rescanHost(hostname) {
+        const btn = event.target;
+        btn.classList.add('spinning');
+        
+        try {
+            await fetch('/api/collect', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({host: hostname})
+            });
+            await loadData();
+        } catch (e) {
+            console.error('Failed to rescan host:', e);
+        } finally {
+            btn.classList.remove('spinning');
+        }
+    }
+    
+    async function refreshAllHosts() {
+        const btn = event.target;
+        btn.classList.add('spinning');
+        
+        // Get filtered hosts (respects host filter)
+        const hostFilter = document.getElementById('hostFilter').value;
+        const hostsToRefresh = hostFilter ? [hostFilter] : (data.hosts || []);
+        
+        try {
+            // Refresh hosts sequentially
+            for (const host of hostsToRefresh) {
+                await fetch('/api/collect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({host: host})
+                });
+            }
+            await loadData();
+        } catch (e) {
+            console.error('Failed to refresh hosts:', e);
+        } finally {
+            btn.classList.remove('spinning');
+        }
+    }
+    
+    function showAddHostInput() {
+        document.getElementById('addHostBtn').style.display = 'none';
+        document.getElementById('addHostInline').style.display = 'flex';
+        document.getElementById('addHostUser').value = '';
+        const input = document.getElementById('addHostInput');
+        input.value = '';
+        input.focus();
+    }
+    
+    function hideAddHostInput() {
+        document.getElementById('addHostBtn').style.display = '';
+        document.getElementById('addHostInline').style.display = 'none';
+        document.getElementById('addHostUser').value = '';
+        document.getElementById('addHostInput').value = '';
+    }
+    
+    function handleAddHostKey(event) {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            addHostFromInput();
+        } else if (event.key === 'Escape') {
+            hideAddHostInput();
+        }
+    }
+    
+    async function addHostFromInput() {
+        const userInput = document.getElementById('addHostUser');
+        const hostInput = document.getElementById('addHostInput');
+        const user = userInput.value.trim();
+        const ip = hostInput.value.trim();
+        if (!ip) return;
+        
+        // Format: user@host or just host
+        const hostEntry = user && user !== 'root' ? `${user}@${ip}` : ip;
+        
+        const hosts = [...(settingsData.hosts || [])];
+        // Check if host already exists (with or without user)
+        const existingIp = hosts.find(h => {
+            const existingHost = h.includes('@') ? h.split('@')[1] : h;
+            return existingHost === ip;
+        });
+        if (existingIp) { 
+            hideAddHostInput();
+            return; 
+        }
+        hosts.push(hostEntry);
+        
+        // Clear input immediately and show scanning state
+        userInput.value = '';
+        hostInput.value = '';
+        const btn = document.querySelector('.add-host-confirm');
+        const originalText = btn.textContent;
+        btn.textContent = '...';
+        btn.disabled = true;
+        
+        try {
+            // First save the host to config
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({hosts})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.hosts = result.hosts || hosts;
+                
+                // Now trigger fetch for just this host
+                try {
+                    await fetch('/api/collect', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({host: hostEntry})
+                    });
+                } catch (e) {
+                    console.warn('Fetch failed:', e);
+                }
+                
+                // Refresh data to show new host
+                await loadData();
+                hideAddHostInput();
+            }
+        } catch (e) { 
+            console.error('Failed to add host:', e); 
+        } finally {
+            btn.textContent = originalText;
+            btn.disabled = false;
+        }
+    }
+    
     async function saveSshUser() {
         const val = document.getElementById('sshUserInput').value.trim();
         if (!val) return;
@@ -2191,6 +2791,19 @@ def get_html_template() -> str:
                 body: JSON.stringify({ssh_user: val})
             });
         } catch (e) { console.error('Failed to save SSH user:', e); }
+    }
+    
+    async function saveTempUnit() {
+        const val = document.getElementById('tempUnitSelect').value;
+        tempUnit = val;
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({temp_unit: val})
+            });
+            renderData(); // Re-render to show new unit
+        } catch (e) { console.error('Failed to save temp unit:', e); }
     }
     
     async function setPreset(name) {
@@ -2225,6 +2838,7 @@ def get_html_template() -> str:
     
     function updatePresetDropdown() {
         if (settingsData && settingsData.active_preset) {
+            setDropdownValue('presetFilterWrapper', settingsData.active_preset);
             document.getElementById('presetFilter').value = settingsData.active_preset;
         }
     }
@@ -2433,6 +3047,7 @@ def get_html_template() -> str:
         document.body.setAttribute('data-theme', 'dark');
         document.getElementById('themeBtn').textContent = '🌙';
     }
+    initDropdowns();
     // Load settings to get delta range and preset, then load data
     fetch('/api/settings').then(r => r.json()).then(s => {
         settingsData = s;
@@ -2490,10 +3105,21 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
             elif path == '/api/disks':
                 readings = get_current_readings(self.db_path)
                 trends = get_trends(self.db_path)
+                
+                # Get configured hosts - only show these
+                config = load_config()
+                configured_hosts = config.get('hosts', [])
+                
+                # Get host status from DB
+                host_status = get_host_status(self.db_path)
+                
+                # Filter readings to only configured hosts
+                if configured_hosts:
+                    readings = [r for r in readings if r['host'] in configured_hosts]
+                
                 hosts = list(set(r['host'] for r in readings))
                 
                 # Get delta setting from config
-                config = load_config()
                 delta_preset = config.get('delta_preset', '7d')
                 delta_days = DELTA_PRESETS.get(delta_preset, 7)
                 
@@ -2521,10 +3147,26 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 # Recalculate stats based on new status values
                 stats = get_stats(readings)
                 
+                # Build host_status for all configured hosts
+                all_host_status = {}
+                for host in configured_hosts:
+                    if host in host_status:
+                        all_host_status[host] = host_status[host]
+                    else:
+                        # Host in config but never scanned
+                        all_host_status[host] = {
+                            'status': 'pending',
+                            'message': 'Never scanned',
+                            'disk_count': 0,
+                            'last_attempt': None,
+                            'last_success': None,
+                        }
+                
                 # Also send thresholds to frontend for client-side awareness
                 self.send_json({
                     'disks': readings,
-                    'hosts': sorted(hosts),
+                    'hosts': sorted(configured_hosts),
+                    'host_status': all_host_status,
                     'stats': stats,
                     'trends': trends,
                     'thresholds': get_thresholds(),
@@ -2560,6 +3202,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'thresholds': get_thresholds(),
                     'hosts': config.get('hosts', []),
                     'ssh_user': config.get('ssh', {}).get('user', 'root'),
+                    'temp_unit': config.get('temp_unit', 'C'),
                     'host_stats': get_host_stats(self.db_path),
                     'delta_preset': config.get('delta_preset', '7d'),
                 })
@@ -2636,6 +3279,12 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     save_config_subkey('ssh', 'user', ssh_user.strip())
                     result['ssh_user'] = ssh_user.strip()
                 
+                # Handle temp_unit change
+                temp_unit = data.get('temp_unit')
+                if temp_unit is not None and temp_unit in ('C', 'F'):
+                    save_config_value('temp_unit', temp_unit)
+                    result['temp_unit'] = temp_unit
+                
                 # Handle delta preset change
                 delta_preset = data.get('delta_preset')
                 if delta_preset is not None:
@@ -2648,8 +3297,19 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
             elif path == '/api/collect':
                 # Trigger data collection
                 if self.fetch_script:
+                    # Check for specific host in request body
+                    try:
+                        req_data = json.loads(body) if body else {}
+                    except json.JSONDecodeError:
+                        req_data = {}
+                    
+                    cmd = [sys.executable, self.fetch_script]
+                    # If specific host requested, only fetch that one
+                    if req_data.get('host'):
+                        cmd.extend(['--hosts', req_data['host']])
+                    
                     result = subprocess.run(
-                        [sys.executable, self.fetch_script],
+                        cmd,
                         capture_output=True,
                         text=True,
                         timeout=300

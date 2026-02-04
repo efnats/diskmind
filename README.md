@@ -7,10 +7,12 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 ## Features
 
 - **Multi-host collection** — gather SMART data from any number of hosts via SSH
+- **Per-host SSH users** — configure different SSH users per host (e.g. `stefan@192.168.1.10`)
 - **All disk types** — HDD, SSD, and NVMe with full attribute capture
 - **All SMART attributes** — stored as JSON, not limited to a fixed subset
-- **Web dashboard** — sortable tables, dark/light theme, status filtering
-- **Settings panel** — manage hosts, SSH user, and threshold presets from the dashboard
+- **Web dashboard** — sortable tables, dark/light theme, status filtering, custom dropdowns
+- **Inline host editing** — edit hostname and SSH user directly in the dashboard
+- **Settings panel** — manage hosts and temperature unit (°C/°F) from the dashboard
 - **Static reports** — generate standalone HTML files for sharing or archival
 - **Trend tracking** — sparkline charts showing attribute history with delta indicators
 - **Delta-based alerting** — cumulative counters (timeouts, errors) only trigger warnings if they increased within the selected time range
@@ -126,11 +128,11 @@ vi config/config.yaml    # Set your hosts
 
 ```yaml
 hosts:
-  - 192.168.1.10
-  - 192.168.1.11
+  - 192.168.1.10              # uses root (default)
+  - stefan@192.168.1.11       # uses stefan
+  - admin@192.168.1.12        # uses admin
 
 ssh:
-  user: root
   timeout: 30
 
 database:
@@ -142,6 +144,9 @@ threshold_preset: backblaze
 
 # Delta time range for issue detection: 1h, 24h, 7d, 30d, 90d, all
 delta_preset: 7d
+
+# Temperature display unit: C or F
+temp_unit: C
 ```
 
 ### Threshold Presets
@@ -171,12 +176,17 @@ The web dashboard provides:
 
 - **Summary cards** — total, healthy, warning, critical counts (click to filter)
 - **Host groups** — disks grouped by host with drive count, total capacity, and last scan time
+- **Host management** — add, edit (✎), rescan (↻), and remove (✕) hosts directly in the UI
+- **Inline host editing** — edit SSH user and hostname without leaving the dashboard
+- **Custom dropdowns** — polished UI elements for all filter controls
+- **Type column** — separate sortable column for disk type (HDD/SSD/NVMe) with colored badges
 - **Host filter & search** — dropdown and free-text search across all fields
-- **Sortable columns** — device, model, serial, capacity, power-on hours, temperature, since, status
-- **Since column** — shows how long this disk has been monitored (minutes, hours, or days)
+- **Sortable columns** — device, type, model, serial, capacity, power-on hours, temperature, since, last, status
+- **Since column** — shows how long this disk has been monitored
+- **Last column** — shows time since last scan
 - **Detail panel** — click any row to expand; shows sidebar with disk identity and SMART attribute table with values, deltas, and sparkline trends
 - **Show all attributes** — health attributes shown by default, click to expand all attributes
-- **Settings panel** — manage monitored hosts, SSH user, and threshold presets
+- **Settings panel** — temperature unit (°C/°F) preference
 - **Threshold editor** — customize warning/critical thresholds per attribute
 - **Dark/light theme** — persisted across reloads
 - **Auto-refresh** — every 60 seconds, preserving scroll position and expanded panels

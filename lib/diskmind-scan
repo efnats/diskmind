@@ -2,6 +2,13 @@
 # diskmind-scan - Node Agent
 # Outputs SMART data as CSV to stdout
 
+# Use sudo for smartctl if not running as root
+if [ "$(id -u)" -eq 0 ]; then
+    SMARTCTL="smartctl"
+else
+    SMARTCTL="sudo smartctl"
+fi
+
 # CSV Header
 echo "wwn,serial,device,type,model,capacity_bytes,firmware,rpm,sector_size,smart_status,smart_attributes"
 
@@ -10,11 +17,11 @@ for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1
     [ -b "$dev" ] || continue
     
     # Get SMART info (skip if no access)
-    info=$(smartctl -i "$dev" 2>&1) || continue
+    info=$($SMARTCTL -i "$dev" 2>&1) || continue
     echo "$info" | grep -qi "permission denied\|unable to detect\|not supported" && continue
     
-    attrs=$(smartctl -A "$dev" 2>/dev/null) || true
-    health=$(smartctl -H "$dev" 2>/dev/null) || true
+    attrs=$($SMARTCTL -A "$dev" 2>/dev/null) || true
+    health=$($SMARTCTL -H "$dev" 2>/dev/null) || true
     
     # Extract basic info
     serial=$(echo "$info" | grep -i "serial number" | cut -d: -f2 | xargs)

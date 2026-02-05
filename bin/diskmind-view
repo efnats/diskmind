@@ -380,8 +380,9 @@ def load_config() -> dict:
     return {}
 
 
-def save_config_value(key: str, value: str):
-    """Update a single top-level key in config/config.yaml, preserving comments."""
+def save_config_value(key: str, value):
+    """Update a single top-level key in config/config.yaml, preserving comments.
+    If value is None, removes the key from the config file."""
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -399,10 +400,13 @@ def save_config_value(key: str, value: str):
         if ':' in stripped:
             k, _, _ = stripped.partition(':')
             if k.strip() == key:
-                lines[i] = f'{key}: {value}'
+                if value is None:
+                    lines.pop(i)
+                else:
+                    lines[i] = f'{key}: {value}'
                 found = True
                 break
-    if not found:
+    if not found and value is not None:
         lines.append(f'{key}: {value}')
     
     config_path.write_text('\n'.join(lines) + '\n')
@@ -1276,69 +1280,6 @@ def get_html_template() -> str:
         
         <div id="error" class="error" style="display: none;"></div>
         
-        <div id="settingsOverlay" class="settings-overlay" style="display:none;" onclick="if(event.target===this)toggleSettings()">
-            <div class="settings-panel" style="width: 320px;">
-                <div class="settings-header">
-                    <h2>Settings</h2>
-                    <button class="settings-close" onclick="toggleSettings()">✕</button>
-                </div>
-                <div class="settings-body">
-                    <div class="settings-section-title">Temperature Unit</div>
-                    <p class="settings-section-hint">Display temperatures in Celsius or Fahrenheit.</p>
-                    <select id="tempUnitSelect" class="host-input" style="width:100%" onchange="saveTempUnit()">
-                        <option value="C">Celsius (°C)</option>
-                        <option value="F">Fahrenheit (°F)</option>
-                    </select>
-                    
-                    <div class="settings-section-title" style="margin-top:18px">Auto-Refresh</div>
-                    <p class="settings-section-hint">How often the dashboard fetches new data.</p>
-                    <select id="refreshIntervalSelect" class="host-input" style="width:100%" onchange="saveRefreshInterval()">
-                        <option value="0">Off</option>
-                        <option value="30">30 seconds</option>
-                        <option value="60">1 minute</option>
-                        <option value="120">2 minutes</option>
-                        <option value="300">5 minutes</option>
-                        <option value="600">10 minutes</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Threshold Editor Popup -->
-        <div class="threshold-overlay" id="thresholdOverlay" onclick="if(event.target===this)toggleThresholdEditor()">
-            <div class="threshold-panel">
-                <div class="threshold-header">
-                    <h2>Threshold Settings</h2>
-                    <button class="threshold-close" onclick="toggleThresholdEditor()">✕</button>
-                </div>
-                <div class="threshold-body">
-                    <div class="preset-buttons">
-                        <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
-                        <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
-                        <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
-                        <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
-                    </div>
-                    <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
-                    
-                    <div class="threshold-section">
-                        <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
-                        <table class="threshold-table" id="ataThresholds">
-                            <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                    
-                    <div class="threshold-section">
-                        <div class="threshold-section-title">NVMe</div>
-                        <table class="threshold-table" id="nvmeThresholds">
-                            <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
         <div class="stats">
             <div class="stat" onclick="filterStatus('')">
                 <div class="stat-label">Total</div>
@@ -1460,6 +1401,78 @@ def get_html_template() -> str:
         <div id="content"><div class="loading">Loading...</div></div>
         
         <footer class="footer">diskmind v1.5</footer>
+    </div>
+    
+    <!-- Settings Overlay -->
+    <div id="settingsOverlay" class="settings-overlay" style="display:none;" onclick="if(event.target===this)toggleSettings()">
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="settings-close" onclick="toggleSettings()">✕</button>
+            </div>
+            <div class="settings-body">
+                <div class="settings-section-title">Temperature Unit</div>
+                <p class="settings-section-hint">Display temperatures in Celsius or Fahrenheit.</p>
+                <select id="tempUnitSelect" class="host-input" style="width:100%" onchange="saveTempUnit()">
+                    <option value="C">Celsius (°C)</option>
+                    <option value="F">Fahrenheit (°F)</option>
+                </select>
+                
+                <div class="settings-section-title" style="margin-top:18px">Auto-Refresh</div>
+                <p class="settings-section-hint">How often the dashboard fetches new data.</p>
+                <select id="refreshIntervalSelect" class="host-input" style="width:100%" onchange="saveRefreshInterval()">
+                    <option value="0">Off</option>
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                    <option value="600">10 minutes</option>
+                </select>
+                
+                <div class="settings-section-title" style="margin-top:18px">Push Token</div>
+                <p class="settings-section-hint">Shared secret for authenticating push agents. Leave empty to allow unauthenticated push.</p>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <input type="password" id="pushTokenInput" class="host-input" style="flex:1; font-family:'SF Mono','Consolas',monospace; font-size:12px;" placeholder="No token set">
+                    <button class="btn" onclick="toggleTokenVisibility()" id="tokenVisBtn" title="Show/hide token" style="padding:6px 8px; font-size:12px;">👁</button>
+                    <button class="btn" onclick="savePushToken()" style="padding:6px 10px; font-size:12px;">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Threshold Editor Overlay -->
+    <div class="threshold-overlay" id="thresholdOverlay" onclick="if(event.target===this)toggleThresholdEditor()">
+        <div class="threshold-panel">
+            <div class="threshold-header">
+                <h2>Threshold Settings</h2>
+                <button class="threshold-close" onclick="toggleThresholdEditor()">✕</button>
+            </div>
+            <div class="threshold-body">
+                <div class="preset-buttons">
+                    <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
+                    <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
+                    <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
+                    <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
+                </div>
+                <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
+                
+                <div class="threshold-section">
+                    <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
+                    <table class="threshold-table" id="ataThresholds">
+                        <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                
+                <div class="threshold-section">
+                    <div class="threshold-section-title">NVMe</div>
+                    <table class="threshold-table" id="nvmeThresholds">
+                        <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
     
     <script>
@@ -2565,6 +2578,32 @@ def get_html_template() -> str:
         startAutoRefresh();
     }
     
+    function toggleTokenVisibility() {
+        const input = document.getElementById('pushTokenInput');
+        input.type = input.type === 'password' ? 'text' : 'password';
+    }
+    
+    async function savePushToken() {
+        const token = document.getElementById('pushTokenInput').value;
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({push_token: token})
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.push_token_set = token.length > 0;
+                // Brief visual feedback
+                const input = document.getElementById('pushTokenInput');
+                input.style.borderColor = 'var(--success)';
+                setTimeout(() => input.style.borderColor = '', 1500);
+            }
+        } catch (e) {
+            console.error('Failed to save push token:', e);
+        }
+    }
+    
     function toggleTheme() {
         const isDark = document.body.getAttribute('data-theme') === 'dark';
         document.body.setAttribute('data-theme', isDark ? '' : 'dark');
@@ -2592,6 +2631,10 @@ def get_html_template() -> str:
             tempUnit = settingsData.temp_unit || 'C';
             document.getElementById('tempUnitSelect').value = tempUnit;
             document.getElementById('refreshIntervalSelect').value = localStorage.getItem('refreshInterval') || '60';
+            // Show placeholder based on whether token is set
+            const tokenInput = document.getElementById('pushTokenInput');
+            tokenInput.value = '';
+            tokenInput.placeholder = settingsData.push_token_set ? '••••••••  (token set)' : 'No token set';
             updatePresetDropdown();
         } catch (e) {
             console.error('Failed to load settings:', e);
@@ -2600,6 +2643,7 @@ def get_html_template() -> str:
     
     function renderHosts() {
         const container = document.getElementById('hostsList');
+        if (!container) return;
         const hosts = settingsData.hosts || [];
         const stats = settingsData.host_stats || {};
         if (hosts.length === 0) {
@@ -3442,6 +3486,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'temp_unit': config.get('temp_unit', 'C'),
                     'host_stats': get_host_stats(self.db_path),
                     'delta_preset': config.get('delta_preset', '7d'),
+                    'push_token_set': bool(config.get('push_token')),
                 })
 
             elif path == '/api/history':
@@ -3528,6 +3573,15 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     save_config_value('delta_preset', delta_preset)
                     result['delta_preset'] = delta_preset
                 
+                # Handle push_token change
+                push_token = data.get('push_token')
+                if push_token is not None:
+                    if push_token == '':
+                        save_config_value('push_token', None)
+                    else:
+                        save_config_value('push_token', push_token)
+                    result['push_token_set'] = bool(push_token)
+                
                 result['success'] = True
                 self.send_json(result)
             
@@ -3573,8 +3627,19 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'Empty body'}, 400)
                     return
                 
-                # Check host is configured for push
+                # Validate push token if configured
                 config = load_config()
+                expected_token = config.get('push_token')
+                if expected_token:
+                    auth_header = self.headers.get('Authorization', '')
+                    provided_token = ''
+                    if auth_header.startswith('Bearer '):
+                        provided_token = auth_header[7:]
+                    if provided_token != expected_token:
+                        self.send_json({'error': 'Invalid or missing push token'}, 401)
+                        return
+                
+                # Check host is configured for push
                 raw_hosts = config.get('hosts', [])
                 host_method = None
                 for h in raw_hosts:

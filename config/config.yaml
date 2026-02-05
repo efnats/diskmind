@@ -3,6 +3,7 @@
 hosts:
   - ssh:192.168.37.10
   - push:192.168.28.15
+  - push:192.168.28.10
   # - 192.168.1.2
 
 ssh:
@@ -16,3 +17,4 @@ database:
 # Threshold preset: backblaze, conservative, relaxed
 threshold_preset: backblaze
 delta_preset: 24h
+push_token: hodldiplom

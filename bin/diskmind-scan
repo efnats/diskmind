@@ -6,6 +6,7 @@
 PUSH_URL=""
 HOST_ID=""
 LOG_FILE=""
+PUSH_TOKEN=""
 BUFFER_DIR="/var/lib/diskmind/buffer"
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -17,6 +18,10 @@ while [[ $# -gt 0 ]]; do
             HOST_ID="$2"
             shift 2
             ;;
+        --token)
+            PUSH_TOKEN="$2"
+            shift 2
+            ;;
         --log)
             LOG_FILE="$2"
             shift 2
@@ -26,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo "Usage: diskmind-scan [--push URL] [--host HOSTNAME] [--log FILE] [--buffer-dir DIR]"
+            echo "Usage: diskmind-scan [--push URL] [--host HOSTNAME] [--token TOKEN] [--log FILE] [--buffer-dir DIR]"
             echo ""
             echo "Collects SMART data from local disks."
             echo ""
@@ -35,6 +40,7 @@ while [[ $# -gt 0 ]]; do
             echo "                   Example: --push http://192.168.1.100:8080"
             echo "  --host HOST      Host identifier for push mode (default: hostname)"
             echo "                   Use IP if that's what's in your diskmind config"
+            echo "  --token TOKEN    Push authentication token (must match server config)"
             echo "  --log FILE       Log output to file with timestamp (for cron)"
             echo "  --buffer-dir DIR Directory for buffering data when server offline"
             echo "                   (default: /var/lib/diskmind/buffer)"
@@ -72,8 +78,15 @@ send_to_server() {
     local http_code response body
     
     # Get both HTTP status code and response body
+    # Build auth header if token is set
+    local auth_args=()
+    if [ -n "$PUSH_TOKEN" ]; then
+        auth_args=(-H "Authorization: Bearer ${PUSH_TOKEN}")
+    fi
+    
     response=$(echo "$csv_data" | curl -s -w "\n%{http_code}" -X POST \
         -H "Content-Type: text/csv" \
+        "${auth_args[@]}" \
         --connect-timeout 10 \
         --max-time 30 \
         --data-binary @- \
@@ -98,13 +111,14 @@ send_to_server() {
     server_error=$(echo "$body" | sed 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
     
     case "$http_code" in
+        401) LAST_ERROR="Auth failed: ${server_error}" ;;
         403) LAST_ERROR="Rejected: ${server_error}" ;;
         400) LAST_ERROR="Bad request: ${server_error}" ;;
         *)   LAST_ERROR="Server error (HTTP ${http_code})" ;;
     esac
     
     # Return 2 for rejected (don't buffer), 1 for unreachable (buffer)
-    if [ "$http_code" = "403" ]; then
+    if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
         return 2
     fi
     return 1

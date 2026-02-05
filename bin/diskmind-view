@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -36,6 +37,36 @@ def get_db_connection(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# Track last cleanup time
+_last_cleanup = 0
+
+
+def cleanup_old_readings(db_path: str):
+    """Remove readings older than retention_days. Runs at most once per hour."""
+    global _last_cleanup
+    now = time.time()
+    if now - _last_cleanup < 3600:
+        return
+    _last_cleanup = now
+    
+    config = load_config()
+    retention_days = config.get('database', {}).get('retention_days', 365)
+    if retention_days <= 0:
+        return
+    
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        DELETE FROM readings 
+        WHERE timestamp < datetime('now', ?)
+    ''', (f'-{retention_days} days',))
+    deleted = cursor.rowcount
+    if deleted > 0:
+        print(f"[cleanup] Removed {deleted} readings older than {retention_days} days")
+    conn.commit()
+    conn.close()
 
 
 # Delta preset mappings (preset name -> days)
@@ -1195,6 +1226,9 @@ def get_html_template() -> str:
         [data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(200,200,200,0.35); }
         .settings-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; color: #555; }
         .settings-section-hint { font-size: 12px; color: #777; margin: 0 0 10px 0; }
+        .token-btn { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border:1px solid #d1d5db; border-radius:6px; background:#fff; color:#555; cursor:pointer; transition: all 0.15s; flex-shrink:0; }
+        .token-btn:hover { background:#f0f0f0; color:#1a1a2e; border-color:#aaa; }
+        .token-btn.save { width:auto; padding:0 12px; font-size:12px; font-weight:500; }
         .hosts-editor { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
         .host-row { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: #ffffff; border: 1px solid #d5d9e0; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; }
         .host-row .host-addr { flex: 1; }
@@ -1222,6 +1256,8 @@ def get_html_template() -> str:
         [data-theme="dark"] .settings-close:hover { background: #334766; }
         [data-theme="dark"] .settings-section-title { color: #94a3b8; }
         [data-theme="dark"] .settings-section-hint { color: #64748b; }
+        [data-theme="dark"] .token-btn { background: rgba(255,255,255,0.05); border-color: var(--border); color: var(--text-muted); }
+        [data-theme="dark"] .token-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); border-color: var(--text-muted); }
         
         /* Threshold Editor */
         .threshold-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
@@ -1429,12 +1465,31 @@ def get_html_template() -> str:
                     <option value="600">10 minutes</option>
                 </select>
                 
+                <div class="settings-section-title" style="margin-top:18px">Data Retention</div>
+                <p class="settings-section-hint">How long SMART readings are kept. Older data is deleted automatically.</p>
+                <select id="retentionSelect" class="host-input" style="width:100%" onchange="saveRetention()">
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="180">6 months</option>
+                    <option value="365">1 year</option>
+                    <option value="730">2 years</option>
+                    <option value="0">Forever</option>
+                </select>
+                
                 <div class="settings-section-title" style="margin-top:18px">Push Token</div>
                 <p class="settings-section-hint">Shared secret for authenticating push agents. Leave empty to allow unauthenticated push.</p>
-                <div style="display:flex; gap:6px; align-items:center;">
+                <div style="display:flex; gap:5px; align-items:center;">
                     <input type="password" id="pushTokenInput" class="host-input" style="flex:1; font-family:'SF Mono','Consolas',monospace; font-size:12px;" placeholder="No token set">
-                    <button class="btn" onclick="toggleTokenVisibility()" id="tokenVisBtn" title="Show/hide token" style="padding:6px 8px; font-size:12px;">👁</button>
-                    <button class="btn" onclick="savePushToken()" style="padding:6px 10px; font-size:12px;">Save</button>
+                    <button class="token-btn" onclick="toggleTokenVisibility()" id="tokenVisBtn" title="Show/hide">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                    <button class="token-btn" onclick="generateToken()" title="Generate token">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                    </button>
+                    <button class="token-btn" onclick="copyToken()" id="copyTokenBtn" title="Copy to clipboard">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    <button class="token-btn save" onclick="savePushToken()">Save</button>
                 </div>
             </div>
         </div>
@@ -2578,9 +2633,46 @@ def get_html_template() -> str:
         startAutoRefresh();
     }
     
+    async function saveRetention() {
+        const val = parseInt(document.getElementById('retentionSelect').value);
+        try {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({retention_days: val})
+            });
+        } catch (e) {
+            console.error('Failed to save retention:', e);
+        }
+    }
+    
     function toggleTokenVisibility() {
         const input = document.getElementById('pushTokenInput');
         input.type = input.type === 'password' ? 'text' : 'password';
+    }
+    
+    function generateToken() {
+        const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+        const arr = new Uint8Array(14);
+        crypto.getRandomValues(arr);
+        const token = Array.from(arr, b => chars[b % chars.length]).join('');
+        const input = document.getElementById('pushTokenInput');
+        input.value = token;
+        input.type = 'text';
+    }
+    
+    function copyToken() {
+        const input = document.getElementById('pushTokenInput');
+        const val = input.value;
+        if (!val) return;
+        navigator.clipboard.writeText(val).then(() => {
+            const btn = document.getElementById('copyTokenBtn');
+            const original = btn.innerHTML;
+            btn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+            btn.style.color = 'var(--success)';
+            btn.style.borderColor = 'var(--success)';
+            setTimeout(() => { btn.innerHTML = original; btn.style.color = ''; btn.style.borderColor = ''; }, 1500);
+        });
     }
     
     async function savePushToken() {
@@ -2631,6 +2723,7 @@ def get_html_template() -> str:
             tempUnit = settingsData.temp_unit || 'C';
             document.getElementById('tempUnitSelect').value = tempUnit;
             document.getElementById('refreshIntervalSelect').value = localStorage.getItem('refreshInterval') || '60';
+            document.getElementById('retentionSelect').value = settingsData.retention_days || 365;
             // Show placeholder based on whether token is set
             const tokenInput = document.getElementById('pushTokenInput');
             tokenInput.value = '';
@@ -3371,6 +3464,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 self.send_html(get_html_template())
             
             elif path == '/api/disks':
+                cleanup_old_readings(self.db_path)
                 readings = get_current_readings(self.db_path)
                 trends = get_trends(self.db_path)
                 
@@ -3487,6 +3581,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'host_stats': get_host_stats(self.db_path),
                     'delta_preset': config.get('delta_preset', '7d'),
                     'push_token_set': bool(config.get('push_token')),
+                    'retention_days': config.get('database', {}).get('retention_days', 365),
                 })
 
             elif path == '/api/history':
@@ -3581,6 +3676,12 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     else:
                         save_config_value('push_token', push_token)
                     result['push_token_set'] = bool(push_token)
+                
+                # Handle retention_days change
+                retention_days = data.get('retention_days')
+                if retention_days is not None:
+                    save_config_subkey('database', 'retention_days', int(retention_days))
+                    result['retention_days'] = int(retention_days)
                 
                 result['success'] = True
                 self.send_json(result)

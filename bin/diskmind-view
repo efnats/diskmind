@@ -3,8 +3,12 @@
 diskmind - Web Server
 Serves live reports from SQLite database.
 """
+import sys
+sys.dont_write_bytecode = True
 
 import argparse
+import importlib.machinery
+import importlib.util
 import json
 import os
 import sqlite3
@@ -217,6 +221,32 @@ def get_host_status(db_path: str) -> dict:
             'disk_count': row['disk_count'],
             'last_attempt': row['last_attempt'],
             'last_success': row['last_success'],
+        }
+    conn.close()
+    return result
+
+
+def get_push_attempts(db_path: str) -> dict:
+    """Get rejected push attempts (hosts trying to push while configured as SSH or unknown)."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='push_attempts'")
+    if not cursor.fetchone():
+        conn.close()
+        return {}
+    # Check if reason column exists
+    cursor.execute("PRAGMA table_info(push_attempts)")
+    cols = [row[1] for row in cursor.fetchall()]
+    if 'reason' in cols:
+        cursor.execute('SELECT host, last_attempt, attempts, reason FROM push_attempts')
+    else:
+        cursor.execute('SELECT host, last_attempt, attempts FROM push_attempts')
+    result = {}
+    for row in cursor.fetchall():
+        result[row['host']] = {
+            'last_attempt': row['last_attempt'],
+            'attempts': row['attempts'],
+            'reason': row['reason'] if 'reason' in cols else 'unknown',
         }
     conn.close()
     return result
@@ -954,8 +984,7 @@ def get_html_template() -> str:
         .filter-group-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
         .info-icon { cursor: help; opacity: 0.6; font-size: 11px; position: relative; }
         .info-icon:hover { opacity: 1; }
-        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: #1a1a2e; color: #e2e8f0; padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; width: max-content; max-width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.3); line-height: 1.5; }
-        [data-theme="dark"] .info-icon:hover::after { background: #2a3a52; }
+        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border); padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; width: max-content; max-width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); line-height: 1.5; pointer-events: none; }
         .filter-group-controls { display: flex; align-items: center; gap: 6px; }
         .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
         .filter-group-controls > input:not(.search-input) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
@@ -987,7 +1016,7 @@ def get_html_template() -> str:
         .host-toolbar-btn.spinning { animation: spin 1s linear infinite; pointer-events: none; }
         .add-host-inline { display: flex; align-items: center; }
         .add-host-input-group { display: flex; align-items: center; gap: 4px; }
-        .add-host-input { padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; width: 150px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .add-host-input { padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; width: 130px; font-family: 'SF Mono', 'Consolas', monospace; }
         .add-host-input.add-host-user { width: 70px; }
         .add-host-at { color: var(--text-muted); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
         .add-host-input:focus { outline: none; }
@@ -1000,15 +1029,25 @@ def get_html_template() -> str:
         
         .host-group { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
         .host-header { padding: 12px 16px; background: var(--bg-hover); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
-        .host-name { font-size: 14px; font-weight: 600; }
-        .host-name-display { font-size: 14px; font-weight: 600; }
+        .host-name { font-size: 13px; font-weight: 600; }
+        .host-name-display { font-size: 13px; font-weight: 600; }
+        .host-method-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 5px; border-radius: 3px; margin-right: 6px; vertical-align: 1px; }
+        .host-method-badge.ssh { background: rgba(59,130,246,0.15); color: var(--accent); }
+        .host-method-badge.push { background: rgba(16,185,129,0.15); color: var(--success); }
+        .push-hint { margin-left: 8px; cursor: help; font-size: 13px; color: var(--warning); position: relative; }
+        .push-hint:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 22px; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border); padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; width: max-content; max-width: 280px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); line-height: 1.5; pointer-events: none; }
         .host-user { font-size: 12px; font-weight: 400; color: var(--text-muted); }
         .host-edit-form { display: inline-flex; align-items: center; gap: 4px; }
+        .method-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; height: 26px; }
+        .method-toggle-btn { padding: 0 8px; border: none; background: transparent; color: var(--text-muted); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; transition: all 0.15s; }
+        .method-toggle-btn.active { background: var(--accent); color: white; }
+        .method-toggle-btn:not(.active):hover { background: var(--bg-hover); color: var(--text-primary); }
         .host-edit-input { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
         .host-edit-input:focus { outline: none; border-color: var(--accent); }
         .host-edit-input.host-edit-user { width: 60px; }
-        .host-edit-input.host-edit-ip { width: 120px; }
+        .host-edit-input.host-edit-ip { width: 145px; }
         .host-edit-at { color: var(--text-muted); font-size: 12px; }
+        .host-edit-ssh-fields { display: inline-flex; align-items: center; gap: 4px; }
         .host-edit-confirm { padding: 4px 8px; border: none; border-radius: 4px; background: var(--success); color: white; font-size: 12px; cursor: pointer; }
         .host-edit-confirm:hover { opacity: 0.9; }
         .host-edit-cancel { padding: 4px 8px; border: none; border-radius: 4px; background: var(--bg-secondary); color: var(--text-muted); font-size: 12px; cursor: pointer; }
@@ -1017,22 +1056,38 @@ def get_html_template() -> str:
         .host-badge.ok { background: rgba(16,185,129,0.1); color: var(--success); }
         .host-badge.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
         .host-badge.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
-        .host-badge.offline { background: rgba(100,116,139,0.15); color: var(--text-muted); }
+        .host-badge.offline { background: rgba(239,68,68,0.1); color: var(--danger); }
         .host-badge.pending { background: rgba(59,130,246,0.1); color: var(--accent); }
-        .host-group.host-error { opacity: 0.7; }
-        .host-group.host-error .host-header { cursor: default; }
+        .host-group.host-error { }
+        .host-group.host-error .host-header { cursor: default; border-left: 3px solid var(--danger); }
         .host-group.host-error .host-name { color: var(--text-secondary); }
+        .host-group.host-error .host-stats { color: var(--text-secondary); }
+        .pending-hosts-section { margin-top: 16px; border: 1px dashed var(--border); border-radius: 10px; padding: 16px; }
+        .pending-hosts-header { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 12px; }
+        .pending-host-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+        .pending-host-row + .pending-host-row { border-top: 1px solid var(--border); }
+        .pending-host-info { display: flex; align-items: center; gap: 8px; }
+        .pending-host-ip { font-family: 'SF Mono', 'Consolas', monospace; font-size: 13px; color: var(--text-primary); }
+        .pending-host-meta { font-size: 11px; color: var(--text-muted); }
+        .pending-host-actions { display: flex; gap: 6px; }
+        .pending-btn { padding: 4px 12px; border: none; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+        .pending-btn.accept { background: rgba(16,185,129,0.15); color: var(--success); }
+        .pending-btn.accept:hover { background: var(--success); color: white; }
+        .pending-btn.dismiss { background: rgba(100,116,139,0.1); color: var(--text-muted); }
+        .pending-btn.dismiss:hover { background: rgba(100,116,139,0.2); color: var(--text-secondary); }
         .host-stats { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px; }
         .host-actions { display: flex; gap: 4px; margin-left: 12px; }
         .host-action-btn { padding: 0 8px; height: 24px; border: none; border-radius: 4px; background: var(--bg-primary); color: var(--text-muted); cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; transition: all 0.15s; white-space: nowrap; }
         .host-action-btn.reload { font-size: 14px; }
         .host-action-btn.reload:hover { background: rgba(59,130,246,0.15); color: var(--accent); }
+        .host-action-btn.reload.disabled { opacity: 0.3; cursor: default; }
+        .host-action-btn.reload.disabled:hover { background: var(--bg-primary); color: var(--text-muted); }
         .host-action-btn.reload.spinning { animation: spin 1s linear infinite; pointer-events: none; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .host-action-btn.edit:hover { background: rgba(59,130,246,0.15); color: var(--accent); }
         .host-action-btn.delete:hover { background: rgba(239,68,68,0.15); color: var(--danger); }
         .host-action-btn.confirming { background: var(--danger); color: white; padding: 0 10px; font-weight: 500; }
-        .host-action-btn.confirming:hover { background: #dc2626; }
+        .host-action-btn.confirming:hover { background: #b91c1c; color: white; }
         .host-toggle { transition: transform 0.2s; }
         .host-group.collapsed .host-toggle { transform: rotate(-90deg); }
         .host-group.collapsed .host-content { display: none; }
@@ -1379,18 +1434,25 @@ def get_html_template() -> str:
                     <button id="addHostBtn" class="host-toolbar-btn" onclick="showAddHostInput()" title="Add host">+</button>
                 </div>
                 <div id="addHostInline" class="add-host-input-group" style="display:none;">
-                    <input type="text" id="addHostUser" class="add-host-input add-host-user" placeholder="user" title="SSH user (leave empty for root)">
-                    <span class="add-host-at">@</span>
+                    <div class="method-toggle" id="addHostMethodToggle">
+                        <button type="button" class="method-toggle-btn active" onclick="setAddMethod('ssh')">SSH</button>
+                        <button type="button" class="method-toggle-btn" onclick="setAddMethod('push')">Push</button>
+                    </div>
+                    <span id="addHostSshFields">
+                        <input type="text" id="addHostUser" class="add-host-input add-host-user" placeholder="user" title="SSH user (leave empty for root)">
+                        <span class="add-host-at">@</span>
+                    </span>
                     <input type="text" id="addHostInput" class="add-host-input" placeholder="IP or hostname" onkeydown="handleAddHostKey(event)">
                     <button class="add-host-confirm" onclick="addHostFromInput()">✓</button>
                     <button class="add-host-cancel" onclick="hideAddHostInput()">✕</button>
+                    <input type="hidden" id="addHostMethod" value="ssh">
                 </div>
             </div>
         </div>
         
         <div id="content"><div class="loading">Loading...</div></div>
         
-        <footer class="footer">diskmind v1.4</footer>
+        <footer class="footer">diskmind v1.5</footer>
     </div>
     
     <script>
@@ -1905,18 +1967,30 @@ def get_html_template() -> str:
         
         // Get host_status from API response
         const hostStatus = data.host_status || {};
+        const pushAttempts = data.push_attempts || {};
         
-        // Build map of IP -> full config entry (user@host or just host)
+        // Build map of IP -> full config entry
+        // Format: "ssh:user@host", "push:host", "user@host" (legacy = ssh)
         const hostConfigMap = {};
         (settingsData?.hosts || []).forEach(h => {
-            const ip = h.includes('@') ? h.split('@')[1] : h;
-            hostConfigMap[ip] = h;
+            let method = 'ssh', rest = h;
+            if (h.startsWith('push:')) { method = 'push'; rest = h.slice(5); }
+            else if (h.startsWith('ssh:')) { method = 'ssh'; rest = h.slice(4); }
+            const ip = rest.includes('@') ? rest.split('@')[1] : rest;
+            hostConfigMap[ip] = { full: h, method, rest, ip };
         });
         
         // Helper to get user for a host
         const getHostUser = (host) => {
-            const entry = hostConfigMap[host] || host;
-            return entry.includes('@') ? entry.split('@')[0] : null;
+            const entry = hostConfigMap[host];
+            if (!entry) return null;
+            return entry.rest.includes('@') ? entry.rest.split('@')[0] : null;
+        };
+        
+        // Helper to get method for a host
+        const getHostMethod = (host) => {
+            const entry = hostConfigMap[host];
+            return entry ? entry.method : 'ssh';
         };
         
         // Render hosts (all configured hosts, even those without disks)
@@ -1926,24 +2000,39 @@ def get_html_template() -> str:
             const status = hostStatus[host] || {};
             const hasDisks = disks.length > 0;
             const hostUser = getHostUser(host);
-            const fullHostEntry = hostConfigMap[host] || host;
+            const hostMethod = getHostMethod(host);
+            const fullHostEntry = hostConfigMap[host]?.full || host;
             
             // User display (small text if != root)
             const userDisplay = hostUser ? `<span class="host-user">${hostUser}@</span>` : '';
+            const methodBadge = `<span class="host-method-badge ${hostMethod}">${hostMethod}</span>`;
+            const pushHint = (hostMethod === 'ssh' && pushAttempts[host])
+                ? `<span class="push-hint" data-tip="This host attempted to push data ${pushAttempts[host].attempts}×. Consider switching to Push mode.">⚡</span>`
+                : '';
             
             // Inline edit form (hidden by default, replaces host name when editing)
-            const hostEditForm = `<div class="host-edit-form" id="hostEdit-${host.replace(/\./g, '-')}" style="display:none;">
-                <input type="text" class="host-edit-input host-edit-user" value="${hostUser || ''}" placeholder="user">
-                <span class="host-edit-at">@</span>
+            const hostEditForm = `<div class="host-edit-form" id="hostEdit-${host.replace(/\\./g, '-')}" style="display:none;">
+                <div class="method-toggle">
+                    <button type="button" class="method-toggle-btn${hostMethod === 'ssh' ? ' active' : ''}" onclick="setEditMethod('${host}', 'ssh')">SSH</button>
+                    <button type="button" class="method-toggle-btn${hostMethod === 'push' ? ' active' : ''}" onclick="setEditMethod('${host}', 'push')">Push</button>
+                </div>
+                <span class="host-edit-ssh-fields" id="hostEditSsh-${host.replace(/\\./g, '-')}" style="${hostMethod === 'push' ? 'display:none' : ''}">
+                    <input type="text" class="host-edit-input host-edit-user" value="${hostUser || ''}" placeholder="user">
+                    <span class="host-edit-at">@</span>
+                </span>
                 <input type="text" class="host-edit-input host-edit-ip" value="${host}">
+                <input type="hidden" class="host-edit-method-val" value="${hostMethod}">
                 <button class="host-edit-confirm" onclick="event.stopPropagation();saveHostEdit('${host}')">✓</button>
                 <button class="host-edit-cancel" onclick="event.stopPropagation();hideHostEdit('${host}')">✕</button>
             </div>`;
             
             // Host actions (reload, edit, remove buttons)
+            const rescanBtn = hostMethod === 'push'
+                ? `<button class="host-action-btn reload disabled" title="Push hosts sync automatically" disabled>↻</button>`
+                : `<button class="host-action-btn reload" onclick="event.stopPropagation();rescanHost('${fullHostEntry}')" title="Rescan host">↻</button>`;
             const hostActions = `
                 <div class="host-actions">
-                    <button class="host-action-btn reload" onclick="event.stopPropagation();rescanHost('${fullHostEntry}')" title="Rescan host">↻</button>
+                    ${rescanBtn}
                     <button class="host-action-btn edit" onclick="event.stopPropagation();showHostEdit('${host}')" title="Edit host">✎</button>
                     <button class="host-action-btn delete" onclick="event.stopPropagation();removeHostByName('${fullHostEntry}')" title="Remove host">✕</button>
                 </div>`;
@@ -1975,11 +2064,11 @@ def get_html_template() -> str:
                 html += `<div class="host-group" data-host="${host}">
                     <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
                         <div>
-                            <span class="host-name-display" id="hostDisplay-${host.replace(/\./g, '-')}">${userDisplay}${host}</span>
+                            <span class="host-name-display" id="hostDisplay-${host.replace(/\\./g, '-')}">${methodBadge}${userDisplay}${host}${pushHint}</span>
                             ${hostEditForm}
-                            ${badge}
+                            <span id="hostBadge-${host.replace(/\\./g, '-')}">${badge}</span>
                         </div>
-                        <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span>${hostActions}<span class="host-toggle">▼</span></div>
+                        <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span><span class="host-toggle">▼</span></div>
                     </div>
                     <div class="host-content">
                         <table class="disk-table">
@@ -2045,14 +2134,45 @@ def get_html_template() -> str:
                 html += `<div class="host-group host-error" data-host="${host}">
                     <div class="host-header">
                         <div>
-                            <span class="host-name-display" id="hostDisplay-${host.replace(/\./g, '-')}">${userDisplay}${host}</span>
+                            <span class="host-name-display" id="hostDisplay-${host.replace(/\\./g, '-')}">${methodBadge}${userDisplay}${host}${pushHint}</span>
                             ${hostEditForm}
-                            ${badge}
+                            <span id="hostBadge-${host.replace(/\\./g, '-')}">${badge}</span>
                         </div>
-                        <div class="host-stats"><span>${statusText || 'Never scanned'}</span>${hostActions}</div>
+                        <div class="host-stats"><span>${statusText || 'Never scanned'}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span></div>
                     </div>
                 </div>`;
             }
+        }
+        
+        // Pending push hosts (unknown hosts that attempted to push)
+        const pendingHosts = Object.entries(pushAttempts).filter(([ip, info]) => info.reason === 'unknown');
+        if (pendingHosts.length > 0) {
+            html += `<div class="pending-hosts-section">
+                <div class="pending-hosts-header">Pending Approval</div>`;
+            for (const [ip, info] of pendingHosts) {
+                // Format last attempt time
+                let ago = '';
+                if (info.last_attempt) {
+                    const d = new Date(info.last_attempt.replace(' ', 'T') + 'Z');
+                    const sec = Math.floor((Date.now() - d) / 1000);
+                    if (sec < 60) ago = 'just now';
+                    else if (sec < 3600) ago = Math.floor(sec / 60) + 'm ago';
+                    else if (sec < 86400) ago = Math.floor(sec / 3600) + 'h ago';
+                    else ago = Math.floor(sec / 86400) + 'd ago';
+                }
+                html += `<div class="pending-host-row">
+                    <div class="pending-host-info">
+                        <span class="host-method-badge push">push</span>
+                        <span class="pending-host-ip">${ip}</span>
+                        <span class="pending-host-meta">${info.attempts}× · ${ago}</span>
+                    </div>
+                    <div class="pending-host-actions">
+                        <button class="pending-btn accept" onclick="approvePushHost('${ip}', 'accept')">Accept</button>
+                        <button class="pending-btn dismiss" onclick="approvePushHost('${ip}', 'dismiss')">Dismiss</button>
+                    </div>
+                </div>`;
+            }
+            html += `</div>`;
         }
         
         document.getElementById('content').innerHTML = html || '<div class="loading">No data available</div>';
@@ -2578,32 +2698,62 @@ def get_html_template() -> str:
         }
     }
     
+    async function approvePushHost(ip, action) {
+        try {
+            const res = await fetch('/api/push-approve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({host: ip, action})
+            });
+            const result = await res.json();
+            if (result.success) {
+                if (action === 'accept') {
+                    // Reload settings to get updated host list
+                    const settingsRes = await fetch('/api/settings');
+                    settingsData = await settingsRes.json();
+                }
+                await loadData();
+            }
+        } catch (e) {
+            console.error('Failed to approve/dismiss host:', e);
+        }
+    }
+    
     function showHostEdit(hostIp) {
-        const id = hostIp.replace(/\./g, '-');
+        const id = hostIp.replace(/\\./g, '-');
         const display = document.getElementById('hostDisplay-' + id);
         const form = document.getElementById('hostEdit-' + id);
+        const actions = document.getElementById('hostActions-' + id);
+        const badge = document.getElementById('hostBadge-' + id);
         if (display && form) {
             display.style.display = 'none';
             form.style.display = 'inline-flex';
+            if (actions) actions.style.display = 'none';
+            if (badge) badge.style.display = 'none';
             form.querySelector('.host-edit-ip').focus();
         }
     }
     
     function hideHostEdit(hostIp) {
-        const id = hostIp.replace(/\./g, '-');
+        const id = hostIp.replace(/\\./g, '-');
         const display = document.getElementById('hostDisplay-' + id);
         const form = document.getElementById('hostEdit-' + id);
+        const actions = document.getElementById('hostActions-' + id);
+        const badge = document.getElementById('hostBadge-' + id);
         if (display && form) {
             display.style.display = '';
             form.style.display = 'none';
+            if (actions) actions.style.display = '';
+            if (badge) badge.style.display = '';
         }
     }
     
     async function saveHostEdit(oldIp) {
-        const id = oldIp.replace(/\./g, '-');
+        const id = oldIp.replace(/\\./g, '-');
         const form = document.getElementById('hostEdit-' + id);
         if (!form) return;
         
+        const newMethod = form.querySelector('.host-edit-method-val').value;
         const newUser = form.querySelector('.host-edit-user').value.trim();
         const newIp = form.querySelector('.host-edit-ip').value.trim();
         
@@ -2615,15 +2765,22 @@ def get_html_template() -> str:
         // Find current entry in config
         const hosts = [...(settingsData.hosts || [])];
         const idx = hosts.findIndex(h => {
-            const ip = h.includes('@') ? h.split('@')[1] : h;
+            let rest = h;
+            if (h.startsWith('push:')) rest = h.slice(5);
+            else if (h.startsWith('ssh:')) rest = h.slice(4);
+            const ip = rest.includes('@') ? rest.split('@')[1] : rest;
             return ip === oldIp;
         });
         if (idx === -1) return;
         
-        // Build new entry
-        const newEntry = newUser && newUser !== 'root'
-            ? `${newUser}@${newIp}`
-            : newIp;
+        // Build new entry with method prefix
+        let newEntry;
+        if (newMethod === 'push') {
+            newEntry = `push:${newIp}`;
+        } else {
+            const userPart = newUser && newUser !== 'root' ? `${newUser}@` : '';
+            newEntry = `ssh:${userPart}${newIp}`;
+        }
         
         if (newEntry === hosts[idx]) {
             hideHostEdit(oldIp);
@@ -2671,17 +2828,29 @@ def get_html_template() -> str:
         const btn = event.target;
         btn.classList.add('spinning');
         
-        // Get filtered hosts (respects host filter)
+        // Get filtered hosts (respects host filter), skip push hosts
         const hostFilter = document.getElementById('hostFilter').value;
-        const hostsToRefresh = hostFilter ? [hostFilter] : (data.hosts || []);
+        const allHosts = hostFilter ? [hostFilter] : (data.hosts || []);
+        
+        // Build config map for method check
+        const cfgMap = {};
+        (settingsData?.hosts || []).forEach(h => {
+            let method = 'ssh', rest = h;
+            if (h.startsWith('push:')) { method = 'push'; rest = h.slice(5); }
+            else if (h.startsWith('ssh:')) { rest = h.slice(4); }
+            const ip = rest.includes('@') ? rest.split('@')[1] : rest;
+            cfgMap[ip] = { method, full: h };
+        });
+        
+        const sshHosts = allHosts.filter(h => (cfgMap[h]?.method || 'ssh') === 'ssh');
         
         try {
-            // Refresh hosts sequentially
-            for (const host of hostsToRefresh) {
+            for (const host of sshHosts) {
+                const entry = cfgMap[host]?.full || host;
                 await fetch('/api/collect', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({host: host})
+                    body: JSON.stringify({host: entry})
                 });
             }
             await loadData();
@@ -2695,6 +2864,7 @@ def get_html_template() -> str:
     function showAddHostInput() {
         document.getElementById('addHostBtn').style.display = 'none';
         document.getElementById('addHostInline').style.display = 'flex';
+        setAddMethod('ssh');
         document.getElementById('addHostUser').value = '';
         const input = document.getElementById('addHostInput');
         input.value = '';
@@ -2708,6 +2878,29 @@ def get_html_template() -> str:
         document.getElementById('addHostInput').value = '';
     }
     
+    function toggleAddUserField(method) {
+        const sshFields = document.getElementById('addHostSshFields');
+        sshFields.style.display = method === 'push' ? 'none' : '';
+    }
+    
+    function setAddMethod(method) {
+        document.getElementById('addHostMethod').value = method;
+        const btns = document.querySelectorAll('#addHostMethodToggle .method-toggle-btn');
+        btns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === method));
+        toggleAddUserField(method);
+    }
+    
+    function setEditMethod(hostIp, method) {
+        const id = hostIp.replace(/\\./g, '-');
+        const form = document.getElementById('hostEdit-' + id);
+        if (!form) return;
+        form.querySelector('.host-edit-method-val').value = method;
+        const btns = form.querySelectorAll('.method-toggle-btn');
+        btns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === method));
+        const sshFields = document.getElementById('hostEditSsh-' + id);
+        if (sshFields) sshFields.style.display = method === 'push' ? 'none' : '';
+    }
+    
     function handleAddHostKey(event) {
         if (event.key === 'Enter') {
             event.preventDefault();
@@ -2718,19 +2911,30 @@ def get_html_template() -> str:
     }
     
     async function addHostFromInput() {
+        const methodSelect = document.getElementById('addHostMethod');
         const userInput = document.getElementById('addHostUser');
         const hostInput = document.getElementById('addHostInput');
+        const method = methodSelect.value;
         const user = userInput.value.trim();
         const ip = hostInput.value.trim();
         if (!ip) return;
         
-        // Format: user@host or just host
-        const hostEntry = user && user !== 'root' ? `${user}@${ip}` : ip;
+        // Format: "push:host" or "ssh:user@host" or "ssh:host"
+        let hostEntry;
+        if (method === 'push') {
+            hostEntry = `push:${ip}`;
+        } else {
+            const userPart = user && user !== 'root' ? `${user}@` : '';
+            hostEntry = `ssh:${userPart}${ip}`;
+        }
         
         const hosts = [...(settingsData.hosts || [])];
-        // Check if host already exists (with or without user)
+        // Check if host already exists
         const existingIp = hosts.find(h => {
-            const existingHost = h.includes('@') ? h.split('@')[1] : h;
+            let rest = h;
+            if (h.startsWith('push:')) rest = h.slice(5);
+            else if (h.startsWith('ssh:')) rest = h.slice(4);
+            const existingHost = rest.includes('@') ? rest.split('@')[1] : rest;
             return existingHost === ip;
         });
         if (existingIp) { 
@@ -2758,15 +2962,17 @@ def get_html_template() -> str:
             if (result.success) {
                 settingsData.hosts = result.hosts || hosts;
                 
-                // Now trigger fetch for just this host
-                try {
-                    await fetch('/api/collect', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({host: hostEntry})
-                    });
-                } catch (e) {
-                    console.warn('Fetch failed:', e);
+                // Only trigger SSH fetch for SSH hosts
+                if (method === 'ssh') {
+                    try {
+                        await fetch('/api/collect', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({host: hostEntry})
+                        });
+                    } catch (e) {
+                        console.warn('Fetch failed:', e);
+                    }
                 }
                 
                 // Refresh data to show new host
@@ -3108,7 +3314,17 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 
                 # Get configured hosts - only show these
                 config = load_config()
-                configured_hosts = config.get('hosts', [])
+                raw_hosts = config.get('hosts', [])
+                
+                # Extract IPs from method-prefixed entries
+                # Formats: "push:ip", "ssh:user@ip", "ssh:ip", "user@ip", "ip"
+                configured_hosts = []
+                for h in raw_hosts:
+                    rest = h
+                    if h.startswith('push:'): rest = h[5:]
+                    elif h.startswith('ssh:'): rest = h[4:]
+                    ip = rest.split('@')[1] if '@' in rest else rest
+                    configured_hosts.append(ip)
                 
                 # Get host status from DB
                 host_status = get_host_status(self.db_path)
@@ -3167,6 +3383,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'disks': readings,
                     'hosts': sorted(configured_hosts),
                     'host_status': all_host_status,
+                    'push_attempts': get_push_attempts(self.db_path),
                     'stats': stats,
                     'trends': trends,
                     'thresholds': get_thresholds(),
@@ -3321,6 +3538,159 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     })
                 else:
                     self.send_json({'error': 'Collect script not configured'}, 500)
+            
+            elif path == '/api/ingest':
+                # Receive pushed SMART data from agents
+                # Expected: CSV data in body, host in query param
+                params = parse_qs(parsed.query)
+                host = params.get('host', [None])[0]
+                
+                if not host:
+                    self.send_json({'error': 'Missing host parameter'}, 400)
+                    return
+                
+                if not body:
+                    self.send_json({'error': 'Empty body'}, 400)
+                    return
+                
+                # Check host is configured for push
+                config = load_config()
+                raw_hosts = config.get('hosts', [])
+                host_method = None
+                for h in raw_hosts:
+                    rest = h
+                    if h.startswith('push:'): method, rest = 'push', h[5:]
+                    elif h.startswith('ssh:'): method, rest = 'ssh', h[4:]
+                    else: method = 'ssh'
+                    ip = rest.split('@')[1] if '@' in rest else rest
+                    if ip == host:
+                        host_method = method
+                        break
+                
+                if host_method is None:
+                    # Log the push attempt from unknown host
+                    try:
+                        import importlib.util
+                        fetch_path = Path(__file__).parent / 'diskmind-fetch'
+                        spec = importlib.util.spec_from_loader('diskmind_fetch', 
+                            importlib.machinery.SourceFileLoader('diskmind_fetch', str(fetch_path)))
+                        fm = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(fm)
+                        conn = fm.init_database(self.db_path)
+                        conn.execute('''
+                            INSERT INTO push_attempts (host, last_attempt, attempts, reason)
+                            VALUES (?, ?, 1, 'unknown')
+                            ON CONFLICT(host) DO UPDATE SET
+                                last_attempt = excluded.last_attempt,
+                                attempts = push_attempts.attempts + 1,
+                                reason = 'unknown'
+                        ''', (host, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                        conn.commit()
+                        conn.close()
+                    except: pass
+                    self.send_json({'error': f'Unknown host: {host}'}, 403)
+                    return
+                
+                if host_method != 'push':
+                    # Log the push attempt so frontend can show a hint
+                    try:
+                        import importlib.util
+                        fetch_path = Path(__file__).parent / 'diskmind-fetch'
+                        spec = importlib.util.spec_from_loader('diskmind_fetch', 
+                            importlib.machinery.SourceFileLoader('diskmind_fetch', str(fetch_path)))
+                        fm = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(fm)
+                        conn = fm.init_database(self.db_path)
+                        conn.execute('''
+                            INSERT INTO push_attempts (host, last_attempt, attempts, reason)
+                            VALUES (?, ?, 1, 'ssh')
+                            ON CONFLICT(host) DO UPDATE SET
+                                last_attempt = excluded.last_attempt,
+                                attempts = push_attempts.attempts + 1,
+                                reason = 'ssh'
+                        ''', (host, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+                        conn.commit()
+                        conn.close()
+                    except: pass
+                    self.send_json({'error': f'Host {host} is configured for SSH, not push'}, 403)
+                    return
+                
+                try:
+                    # Import functions from diskmind-fetch
+                    import importlib.util
+                    fetch_path = Path(__file__).parent / 'diskmind-fetch'
+                    spec = importlib.util.spec_from_loader('diskmind_fetch', 
+                        importlib.machinery.SourceFileLoader('diskmind_fetch', str(fetch_path)))
+                    fetch_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(fetch_module)
+                    
+                    # Parse CSV and store
+                    csv_data = body.decode('utf-8')
+                    readings = fetch_module.parse_csv(csv_data, host=host)
+                    
+                    if not readings:
+                        self.send_json({'error': 'No valid readings in CSV'}, 400)
+                        return
+                    
+                    # Store in database
+                    conn = fetch_module.init_database(self.db_path)
+                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    fetch_module.store_readings(conn, readings, timestamp)
+                    fetch_module.update_host_status(conn, host, 'ok', None, len(readings), timestamp)
+                    # Clear any prior push attempts for this host
+                    conn.execute('DELETE FROM push_attempts WHERE host = ?', (host,))
+                    conn.commit()
+                    conn.close()
+                    
+                    self.send_json({
+                        'success': True,
+                        'host': host,
+                        'disks': len(readings),
+                        'timestamp': timestamp,
+                    })
+                    
+                except Exception as e:
+                    self.send_json({'error': f'Failed to process data: {str(e)}'}, 500)
+            
+            elif path == '/api/push-approve':
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                
+                host = data.get('host')
+                action = data.get('action')  # 'accept' or 'dismiss'
+                
+                if not host or action not in ('accept', 'dismiss'):
+                    self.send_json({'error': 'Missing host or invalid action'}, 400)
+                    return
+                
+                if action == 'accept':
+                    # Add host as push:IP to config
+                    config = load_config()
+                    hosts = config.get('hosts', [])
+                    entry = f'push:{host}'
+                    if entry not in hosts:
+                        hosts.append(entry)
+                        save_config_list('hosts', hosts)
+                
+                # Clear push_attempts entry
+                try:
+                    import importlib.util
+                    fetch_path = Path(__file__).parent / 'diskmind-fetch'
+                    spec = importlib.util.spec_from_loader('diskmind_fetch', 
+                        importlib.machinery.SourceFileLoader('diskmind_fetch', str(fetch_path)))
+                    fm = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(fm)
+                    conn = fm.init_database(self.db_path)
+                    conn.execute('DELETE FROM push_attempts WHERE host = ?', (host,))
+                    conn.commit()
+                    conn.close()
+                except: pass
+                
+                self.send_json({'success': True, 'action': action, 'host': host})
+            
             else:
                 self.send_response(404)
                 self.end_headers()

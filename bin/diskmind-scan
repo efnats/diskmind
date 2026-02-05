@@ -1,0 +1,319 @@
+#!/bin/bash
+# diskmind-scan - Node Agent
+# Outputs SMART data as CSV to stdout, or pushes to server with --push
+
+# Parse arguments
+PUSH_URL=""
+HOST_ID=""
+LOG_FILE=""
+BUFFER_DIR="/var/lib/diskmind/buffer"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --push)
+            PUSH_URL="$2"
+            shift 2
+            ;;
+        --host)
+            HOST_ID="$2"
+            shift 2
+            ;;
+        --log)
+            LOG_FILE="$2"
+            shift 2
+            ;;
+        --buffer-dir)
+            BUFFER_DIR="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: diskmind-scan [--push URL] [--host HOSTNAME] [--log FILE] [--buffer-dir DIR]"
+            echo ""
+            echo "Collects SMART data from local disks."
+            echo ""
+            echo "Options:"
+            echo "  --push URL       Push data to diskmind server instead of stdout"
+            echo "                   Example: --push http://192.168.1.100:8080"
+            echo "  --host HOST      Host identifier for push mode (default: hostname)"
+            echo "                   Use IP if that's what's in your diskmind config"
+            echo "  --log FILE       Log output to file with timestamp (for cron)"
+            echo "  --buffer-dir DIR Directory for buffering data when server offline"
+            echo "                   (default: /var/lib/diskmind/buffer)"
+            echo ""
+            echo "Without --push, outputs CSV to stdout."
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Logging function
+log() {
+    if [ -n "$LOG_FILE" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+    else
+        echo "$*"
+    fi
+}
+
+log_error() {
+    if [ -n "$LOG_FILE" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $*" >> "$LOG_FILE"
+    else
+        echo "$*" >&2
+    fi
+}
+
+# Send CSV data to server, return 0 on success
+send_to_server() {
+    local csv_data="$1"
+    local http_code response body
+    
+    # Get both HTTP status code and response body
+    response=$(echo "$csv_data" | curl -s -w "\n%{http_code}" -X POST \
+        -H "Content-Type: text/csv" \
+        --connect-timeout 10 \
+        --max-time 30 \
+        --data-binary @- \
+        "${PUSH_URL}/api/ingest?host=${HOST_ID}" 2>&1)
+    
+    if [ $? -ne 0 ]; then
+        LAST_ERROR="Server unreachable"
+        return 1
+    fi
+    
+    # Split response: last line is HTTP code, rest is body
+    http_code=$(echo "$response" | tail -1)
+    body=$(echo "$response" | sed '$d')
+    
+    if echo "$body" | grep -q '"success"'; then
+        LAST_DISK_COUNT=$(echo "$body" | sed 's/.*"disks"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/')
+        return 0
+    fi
+    
+    # Extract error message from JSON response
+    local server_error
+    server_error=$(echo "$body" | sed 's/.*"error"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')
+    
+    case "$http_code" in
+        403) LAST_ERROR="Rejected: ${server_error}" ;;
+        400) LAST_ERROR="Bad request: ${server_error}" ;;
+        *)   LAST_ERROR="Server error (HTTP ${http_code})" ;;
+    esac
+    
+    # Return 2 for rejected (don't buffer), 1 for unreachable (buffer)
+    if [ "$http_code" = "403" ]; then
+        return 2
+    fi
+    return 1
+}
+
+# Buffer data to disk
+buffer_data() {
+    local csv_data="$1"
+    mkdir -p "$BUFFER_DIR"
+    local filename="${BUFFER_DIR}/$(date '+%Y%m%d_%H%M%S').csv"
+    echo "$csv_data" > "$filename"
+    log "Buffered data to $filename"
+}
+
+# Send all buffered data
+send_buffered() {
+    [ ! -d "$BUFFER_DIR" ] && return 0
+    
+    local sent=0
+    local failed=0
+    
+    shopt -s nullglob
+    for file in "$BUFFER_DIR"/*.csv; do
+        [ -f "$file" ] || continue
+        
+        send_to_server "$(cat "$file")"
+        rc=$?
+        if [ $rc -eq 0 ]; then
+            rm -f "$file"
+            ((sent++))
+        elif [ $rc -eq 2 ]; then
+            # Rejected - remove buffered file, no point retrying
+            rm -f "$file"
+            ((failed++))
+        else
+            ((failed++))
+            break  # Server down, stop trying
+        fi
+    done
+    shopt -u nullglob
+    
+    if [ $sent -gt 0 ]; then
+        log "Sent $sent buffered file(s)"
+    fi
+    
+    return $failed
+}
+
+# Use sudo for smartctl if not running as root
+# Use absolute path for cron compatibility
+SMARTCTL_BIN=$(command -v smartctl 2>/dev/null || echo "/usr/sbin/smartctl")
+if [ "$(id -u)" -eq 0 ]; then
+    SMARTCTL="$SMARTCTL_BIN"
+else
+    SMARTCTL="sudo $SMARTCTL_BIN"
+fi
+
+# Function to collect data and output CSV
+collect_data() {
+    # CSV Header
+    echo "wwn,serial,device,type,model,capacity_bytes,firmware,rpm,sector_size,smart_status,smart_attributes"
+
+    # Find all block devices (whole disks only, not partitions)
+    for dev in /dev/sd[a-z] /dev/sd[a-z][a-z] /dev/nvme[0-9]n1 /dev/nvme[0-9][0-9]n1; do
+        [ -b "$dev" ] || continue
+        
+        # Get SMART info (skip if no access)
+        info=$($SMARTCTL -i "$dev" 2>&1) || continue
+        echo "$info" | grep -qi "permission denied\|unable to detect\|not supported" && continue
+        
+        attrs=$($SMARTCTL -A "$dev" 2>/dev/null) || true
+        health=$($SMARTCTL -H "$dev" 2>/dev/null) || true
+        
+        # Extract basic info
+        serial=$(echo "$info" | grep -i "serial number" | cut -d: -f2 | xargs)
+        model=$(echo "$info" | grep -iE "device model|model number|product" | head -1 | cut -d: -f2 | xargs | tr ',' ' ')
+        
+        # Extract WWN (World Wide Name) - globally unique disk identifier
+        wwn=""
+        wwn_raw=$(echo "$info" | grep -iE "LU WWN Device Id|IEEE EUI-64|NGUID" | head -1 | cut -d: -f2-)
+        if [ -n "$wwn_raw" ]; then
+            wwn=$(echo "$wwn_raw" | tr -d ' ' | tr '[:upper:]' '[:lower:]')
+        fi
+        
+        # Capacity
+        capacity=$(echo "$info" | grep -iE "user capacity|total nvm capacity|namespace 1 size" | head -1 | grep -oE '[0-9,]+' | head -1 | tr -d ',')
+        
+        # Firmware version
+        firmware=$(echo "$info" | grep -iE "firmware version" | head -1 | cut -d: -f2 | xargs)
+        
+        # Rotation rate
+        rpm_raw=$(echo "$info" | grep -iE "rotation rate" | head -1 | cut -d: -f2 | xargs)
+        if echo "$rpm_raw" | grep -qiE "solid state|not rotational"; then
+            rpm="0"
+        else
+            rpm=$(echo "$rpm_raw" | grep -oE '[0-9]+' | head -1)
+            [ -z "$rpm" ] && rpm=""
+        fi
+        
+        # Sector size
+        sector_size=$(echo "$info" | grep -iE "sector size" | head -1 | grep -oE '[0-9]+' | head -1)
+        [ -z "$sector_size" ] && sector_size=""
+        
+        # Detect type
+        if echo "$info" | grep -qi "nvme"; then
+            type="NVMe"
+        elif echo "$info" | grep -qi "rotation rate.*rpm"; then
+            type="HDD"
+        elif echo "$info" | grep -qi "solid state\|ssd"; then
+            type="SSD"
+        elif [ -f "/sys/block/$(basename $dev)/queue/rotational" ]; then
+            [ "$(cat /sys/block/$(basename $dev)/queue/rotational)" = "1" ] && type="HDD" || type="SSD"
+        else
+            type="Unknown"
+        fi
+        
+        # SMART status
+        if echo "$health" | grep -qi "passed"; then
+            status="PASSED"
+        elif echo "$health" | grep -qi "failed"; then
+            status="FAILED"
+        else
+            status="N/A"
+        fi
+        
+        # Fallback serial
+        [ -z "$serial" ] && serial="$(hostname):$(basename $dev)"
+        
+        # Build JSON with ALL SMART attributes
+        json="{"
+        first=true
+        
+        if [ "$type" = "NVMe" ]; then
+            while IFS= read -r line; do
+                if echo "$line" | grep -qE '^\s*[A-Za-z].*:'; then
+                    key=$(echo "$line" | cut -d: -f1 | xargs | tr ' ' '_')
+                    val=$(echo "$line" | cut -d: -f2- | xargs)
+                    [ -z "$key" ] && continue
+                    num=$(echo "$val" | tr -d ',' | grep -oE '^[0-9]+' | head -1)
+                    if [ -n "$num" ]; then
+                        val="$num"
+                    else
+                        val=$(echo "$val" | tr '"' "'")
+                    fi
+                    $first && first=false || json="$json,"
+                    json="$json\"$key\":\"$val\""
+                fi
+            done <<< "$attrs"
+        else
+            while IFS= read -r line; do
+                if echo "$line" | grep -qE '^\s*[0-9]+\s+\S+\s+0x'; then
+                    name=$(echo "$line" | awk '{print $2}')
+                    raw=$(echo "$line" | awk '{print $10}' | grep -oE '^[0-9]+' | head -1)
+                    [ -z "$raw" ] && raw="0"
+                    $first && first=false || json="$json,"
+                    json="$json\"$name\":\"$raw\""
+                fi
+            done <<< "$attrs"
+        fi
+        json="$json}"
+        
+        # Escape for CSV
+        json_escaped=$(echo "$json" | sed 's/"/""/g')
+        
+        # Output CSV row
+        printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
+            "$wwn" "$serial" "$dev" "$type" "$model" \
+            "${capacity:-0}" "$firmware" "${rpm}" "${sector_size}" \
+            "$status" "$json_escaped"
+    done
+}
+
+# Main
+if [ -n "$PUSH_URL" ]; then
+    # Push mode: collect and send to server
+    # Use --host if provided, otherwise fall back to hostname
+    if [ -z "$HOST_ID" ]; then
+        HOST_ID=$(hostname)
+    fi
+    CSV_DATA=$(collect_data)
+    
+    # Check if we have data (more than just header)
+    LINE_COUNT=$(echo "$CSV_DATA" | wc -l)
+    if [ "$LINE_COUNT" -lt 2 ]; then
+        log_error "No disks found"
+        exit 1
+    fi
+    
+    LAST_DISK_COUNT="?"
+    LAST_ERROR=""
+    
+    # Try to send current data
+    send_to_server "$CSV_DATA"
+    rc=$?
+    if [ $rc -eq 0 ]; then
+        log "Pushed $LAST_DISK_COUNT disk(s) to $PUSH_URL"
+        # Also try to send any buffered data
+        send_buffered
+    elif [ $rc -eq 2 ]; then
+        # Rejected by server (e.g. host configured as SSH) - don't buffer
+        log_error "$LAST_ERROR"
+        exit 1
+    else
+        # Server unreachable, buffer the data
+        log_error "${LAST_ERROR:-Server unreachable}, buffering data"
+        buffer_data "$CSV_DATA"
+        exit 1
+    fi
+else
+    # Normal mode: output to stdout
+    collect_data
+fi

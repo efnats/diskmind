@@ -2,6 +2,8 @@
 """
 diskmind-fetch - Data Collection
 Collects SMART data from remote hosts via SSH and stores in SQLite.
+
+Can also be imported as a library for use by diskmind-view's /api/ingest endpoint.
 """
 
 import argparse
@@ -14,6 +16,196 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+
+# ---------------------------------------------------------------------------
+# Library Functions (importable by diskmind-view)
+# ---------------------------------------------------------------------------
+
+def parse_csv(csv_data: str, host: str = None) -> list[dict]:
+    """Parse CSV data from diskmind-scan output.
+    
+    Args:
+        csv_data: CSV string with header row
+        host: Optional host to set on all readings (overrides any host in data)
+    
+    Returns:
+        List of reading dicts
+    """
+    readings = []
+    reader = csv.DictReader(io.StringIO(csv_data))
+    for row in reader:
+        if host:
+            row['host'] = host
+        readings.append(row)
+    return readings
+
+
+def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: str):
+    """Store readings in database."""
+    cursor = conn.cursor()
+    
+    for r in readings:
+        try:
+            wwn = r.get('wwn', '').strip()
+            serial = r.get('serial', '').strip()
+            # Primary identifier: WWN if available, otherwise serial
+            disk_id = wwn if wwn else serial
+            
+            cursor.execute('''
+                INSERT OR REPLACE INTO readings 
+                (disk_id, wwn, serial, timestamp, host, device, type, model,
+                 capacity_bytes, firmware, rpm, sector_size,
+                 smart_status, smart_attributes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                disk_id,
+                wwn or None,
+                serial,
+                timestamp,
+                r.get('host'),
+                r.get('device'),
+                r.get('type'),
+                r.get('model'),
+                int(r.get('capacity_bytes') or 0),
+                r.get('firmware') or None,
+                int(r.get('rpm') or 0) or None,
+                int(r.get('sector_size') or 0) or None,
+                r.get('smart_status'),
+                r.get('smart_attributes', '{}'),
+            ))
+        except Exception as e:
+            print(f"  Warning: Failed to store {r.get('serial')}: {e}", file=sys.stderr)
+    
+    conn.commit()
+
+
+def update_host_status(conn: sqlite3.Connection, host: str, status: str, message: str, disk_count: int, timestamp: str):
+    """Update host status in database."""
+    cursor = conn.cursor()
+    
+    if status == 'ok':
+        cursor.execute('''
+            INSERT OR REPLACE INTO host_status (host, status, message, disk_count, last_attempt, last_success)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (host, status, message, disk_count, timestamp, timestamp))
+    else:
+        # On failure, preserve last_success if it exists
+        cursor.execute('''
+            INSERT INTO host_status (host, status, message, disk_count, last_attempt, last_success)
+            VALUES (?, ?, ?, ?, ?, NULL)
+            ON CONFLICT(host) DO UPDATE SET
+                status = excluded.status,
+                message = excluded.message,
+                disk_count = excluded.disk_count,
+                last_attempt = excluded.last_attempt
+        ''', (host, status, message, disk_count, timestamp))
+    
+    conn.commit()
+
+
+def init_database(db_path: str) -> sqlite3.Connection:
+    """Initialize SQLite database."""
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    
+    conn.executescript('''
+        CREATE TABLE IF NOT EXISTS readings (
+            disk_id TEXT NOT NULL,
+            wwn TEXT,
+            serial TEXT NOT NULL,
+            timestamp DATETIME NOT NULL,
+            host TEXT NOT NULL,
+            device TEXT NOT NULL,
+            type TEXT,
+            model TEXT,
+            capacity_bytes INTEGER,
+            firmware TEXT,
+            rpm INTEGER,
+            sector_size INTEGER,
+            smart_status TEXT,
+            smart_attributes TEXT,
+            PRIMARY KEY (disk_id, timestamp)
+        );
+        CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
+        CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
+        
+        CREATE TABLE IF NOT EXISTS host_status (
+            host TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            message TEXT,
+            disk_count INTEGER DEFAULT 0,
+            last_attempt DATETIME,
+            last_success DATETIME
+        );
+        
+        CREATE TABLE IF NOT EXISTS push_attempts (
+            host TEXT PRIMARY KEY,
+            last_attempt DATETIME,
+            attempts INTEGER DEFAULT 1,
+            reason TEXT DEFAULT 'unknown'
+        );
+    ''')
+    
+    # Migrate from old schema (serial-based primary key)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(readings)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if 'disk_id' not in columns and 'serial' in columns:
+        print("  Migrating database to v1.1 schema (adding wwn, disk_id)...")
+        conn.executescript('''
+            ALTER TABLE readings RENAME TO readings_old;
+            CREATE TABLE readings (
+                disk_id TEXT NOT NULL,
+                wwn TEXT,
+                serial TEXT NOT NULL,
+                timestamp DATETIME NOT NULL,
+                host TEXT NOT NULL,
+                device TEXT NOT NULL,
+                type TEXT,
+                model TEXT,
+                capacity_bytes INTEGER,
+                smart_status TEXT,
+                smart_attributes TEXT,
+                PRIMARY KEY (disk_id, timestamp)
+            );
+            INSERT INTO readings (disk_id, wwn, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes)
+                SELECT serial, NULL, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes
+                FROM readings_old;
+            DROP TABLE readings_old;
+            CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
+            CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
+        ''')
+        print("  Migration complete.")
+    
+    # Migrate to v1.2 schema (add firmware, rpm, sector_size)
+    if 'firmware' not in columns and 'disk_id' in columns:
+        print("  Migrating database to v1.2 schema (adding firmware, rpm, sector_size)...")
+        for col, coltype in [('firmware', 'TEXT'), ('rpm', 'INTEGER'), ('sector_size', 'INTEGER')]:
+            try:
+                conn.execute(f'ALTER TABLE readings ADD COLUMN {col} {coltype}')
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+        conn.commit()
+        print("  Migration complete.")
+    
+    # Migrate push_attempts: add reason column
+    cursor.execute("PRAGMA table_info(push_attempts)")
+    pa_columns = [row[1] for row in cursor.fetchall()]
+    if pa_columns and 'reason' not in pa_columns:
+        try:
+            conn.execute("ALTER TABLE push_attempts ADD COLUMN reason TEXT DEFAULT 'unknown'")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+    
+    return conn
+
+
+# ---------------------------------------------------------------------------
+# SSH Collection (CLI only)
+# ---------------------------------------------------------------------------
 
 def _parse_simple_yaml(text: str) -> dict:
     """Parse simple YAML (flat keys, string values, simple lists). No PyYAML needed."""
@@ -69,89 +261,6 @@ def load_config(config_path: str) -> dict:
             ]
     
     return config
-
-
-def init_database(db_path: str) -> sqlite3.Connection:
-    """Initialize SQLite database."""
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    
-    conn.executescript('''
-        CREATE TABLE IF NOT EXISTS readings (
-            disk_id TEXT NOT NULL,
-            wwn TEXT,
-            serial TEXT NOT NULL,
-            timestamp DATETIME NOT NULL,
-            host TEXT NOT NULL,
-            device TEXT NOT NULL,
-            type TEXT,
-            model TEXT,
-            capacity_bytes INTEGER,
-            firmware TEXT,
-            rpm INTEGER,
-            sector_size INTEGER,
-            smart_status TEXT,
-            smart_attributes TEXT,
-            PRIMARY KEY (disk_id, timestamp)
-        );
-        CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
-        CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
-        CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
-        
-        CREATE TABLE IF NOT EXISTS host_status (
-            host TEXT PRIMARY KEY,
-            status TEXT NOT NULL,
-            message TEXT,
-            disk_count INTEGER DEFAULT 0,
-            last_attempt DATETIME,
-            last_success DATETIME
-        );
-    ''')
-    
-    # Migrate from old schema (serial-based primary key)
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(readings)")
-    columns = [row[1] for row in cursor.fetchall()]
-    if 'disk_id' not in columns and 'serial' in columns:
-        print("  Migrating database to v1.1 schema (adding wwn, disk_id)...")
-        conn.executescript('''
-            ALTER TABLE readings RENAME TO readings_old;
-            CREATE TABLE readings (
-                disk_id TEXT NOT NULL,
-                wwn TEXT,
-                serial TEXT NOT NULL,
-                timestamp DATETIME NOT NULL,
-                host TEXT NOT NULL,
-                device TEXT NOT NULL,
-                type TEXT,
-                model TEXT,
-                capacity_bytes INTEGER,
-                smart_status TEXT,
-                smart_attributes TEXT,
-                PRIMARY KEY (disk_id, timestamp)
-            );
-            INSERT INTO readings (disk_id, wwn, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes)
-                SELECT serial, NULL, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes
-                FROM readings_old;
-            DROP TABLE readings_old;
-            CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
-            CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
-        ''')
-        print("  Migration complete.")
-    
-    # Migrate to v1.2 schema (add firmware, rpm, sector_size)
-    if 'firmware' not in columns and 'disk_id' in columns:
-        print("  Migrating database to v1.2 schema (adding firmware, rpm, sector_size)...")
-        for col, coltype in [('firmware', 'TEXT'), ('rpm', 'INTEGER'), ('sector_size', 'INTEGER')]:
-            try:
-                conn.execute(f'ALTER TABLE readings ADD COLUMN {col} {coltype}')
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-        conn.commit()
-        print("  Migration complete.")
-    
-    return conn
 
 
 def get_local_script_path() -> str:
@@ -236,12 +345,8 @@ def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> dict:
         if not result.stdout.strip():
             return {'status': 'no_smartctl', 'message': 'No output (smartctl missing or no root)', 'readings': []}
         
-        # Parse CSV
-        readings = []
-        reader = csv.DictReader(io.StringIO(result.stdout))
-        for row in reader:
-            row['host'] = host
-            readings.append(row)
+        # Parse CSV using library function
+        readings = parse_csv(result.stdout, host=host)
         
         if not readings:
             return {'status': 'no_disks', 'message': 'No disks found', 'readings': []}
@@ -254,69 +359,6 @@ def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> dict:
         return {'status': 'error', 'message': f'{e.filename} not found', 'readings': []}
     except Exception as e:
         return {'status': 'error', 'message': str(e)[:100], 'readings': []}
-
-
-def store_readings(conn: sqlite3.Connection, readings: list[dict], timestamp: str):
-    """Store readings in database."""
-    cursor = conn.cursor()
-    
-    for r in readings:
-        try:
-            wwn = r.get('wwn', '').strip()
-            serial = r.get('serial', '').strip()
-            # Primary identifier: WWN if available, otherwise serial
-            disk_id = wwn if wwn else serial
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO readings 
-                (disk_id, wwn, serial, timestamp, host, device, type, model,
-                 capacity_bytes, firmware, rpm, sector_size,
-                 smart_status, smart_attributes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                disk_id,
-                wwn or None,
-                serial,
-                timestamp,
-                r.get('host'),
-                r.get('device'),
-                r.get('type'),
-                r.get('model'),
-                int(r.get('capacity_bytes') or 0),
-                r.get('firmware') or None,
-                int(r.get('rpm') or 0) or None,
-                int(r.get('sector_size') or 0) or None,
-                r.get('smart_status'),
-                r.get('smart_attributes', '{}'),
-            ))
-        except Exception as e:
-            print(f"  Warning: Failed to store {r.get('serial')}: {e}", file=sys.stderr)
-    
-    conn.commit()
-
-
-def update_host_status(conn: sqlite3.Connection, host: str, status: str, message: str, disk_count: int, timestamp: str):
-    """Update host status in database."""
-    cursor = conn.cursor()
-    
-    if status == 'ok':
-        cursor.execute('''
-            INSERT OR REPLACE INTO host_status (host, status, message, disk_count, last_attempt, last_success)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (host, status, message, disk_count, timestamp, timestamp))
-    else:
-        # On failure, preserve last_success if it exists
-        cursor.execute('''
-            INSERT INTO host_status (host, status, message, disk_count, last_attempt, last_success)
-            VALUES (?, ?, ?, ?, ?, NULL)
-            ON CONFLICT(host) DO UPDATE SET
-                status = excluded.status,
-                message = excluded.message,
-                disk_count = excluded.disk_count,
-                last_attempt = excluded.last_attempt
-        ''', (host, status, message, disk_count, timestamp))
-    
-    conn.commit()
 
 
 def cleanup_old_data(conn: sqlite3.Connection, retention_days: int):
@@ -383,11 +425,19 @@ def main():
     ssh_timeout = config.get('ssh', {}).get('timeout', 30)
     retention_days = config.get('database', {}).get('retention_days', 365)
     
-    # Parse hosts - support "user@host" format
+    # Parse hosts - support "method:user@host" format
+    # push: hosts are skipped (they push data themselves)
+    # ssh: or no prefix = collect via SSH
     raw_hosts = config.get('hosts', [])
     hosts = []
     for h in raw_hosts:
         h = str(h).strip()
+        # Skip push hosts
+        if h.startswith('push:'):
+            continue
+        # Strip ssh: prefix if present
+        if h.startswith('ssh:'):
+            h = h[4:]
         if '@' in h:
             user, ip = h.split('@', 1)
             hosts.append({'ip': ip, 'user': user})

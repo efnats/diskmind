@@ -910,13 +910,10 @@ def generate_static_html(readings: list[dict], trends: dict, stats: dict, hosts:
         '<div class="stat-sub" id="statCapacity">-</div>',
         f'<div class="stat-sub" id="statCapacity">{stats["total_capacity_tb"]} TB</div>'
     ).replace(
-        '<button class="btn primary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>',
-        ''
-    ).replace(
         'loadData();',
         '// Static report - no auto-load'
     ).replace(
-        "setInterval(loadData, 60000);",
+        "startAutoRefresh();",
         "// Static report - no auto-refresh"
     )
 
@@ -1274,7 +1271,6 @@ def get_html_template() -> str:
                 <span class="timestamp" id="lastUpdate">Loading...</span>
                 <button class="btn" onclick="toggleTheme()" id="themeBtn" title="Toggle theme">☀️</button>
                 <button class="btn" onclick="toggleSettings()" id="settingsBtn" title="Settings">⚙️</button>
-                <button class="btn primary" id="refreshBtn" onclick="refresh()">↻ Refresh</button>
             </div>
         </header>
         
@@ -1292,6 +1288,17 @@ def get_html_template() -> str:
                     <select id="tempUnitSelect" class="host-input" style="width:100%" onchange="saveTempUnit()">
                         <option value="C">Celsius (°C)</option>
                         <option value="F">Fahrenheit (°F)</option>
+                    </select>
+                    
+                    <div class="settings-section-title" style="margin-top:18px">Auto-Refresh</div>
+                    <p class="settings-section-hint">How often the dashboard fetches new data.</p>
+                    <select id="refreshIntervalSelect" class="host-input" style="width:100%" onchange="saveRefreshInterval()">
+                        <option value="0">Off</option>
+                        <option value="30">30 seconds</option>
+                        <option value="60">1 minute</option>
+                        <option value="120">2 minutes</option>
+                        <option value="300">5 minutes</option>
+                        <option value="600">10 minutes</option>
                     </select>
                 </div>
             </div>
@@ -2541,14 +2548,21 @@ def get_html_template() -> str:
         });
     }
     
-    function refresh() {
-        const btn = document.getElementById('refreshBtn');
-        btn.disabled = true;
-        btn.textContent = '↻ Loading...';
-        loadData().finally(() => {
-            btn.disabled = false;
-            btn.textContent = '↻ Refresh';
-        });
+    // --- Auto-Refresh ---
+    let refreshTimer = null;
+    
+    function startAutoRefresh() {
+        if (refreshTimer) clearInterval(refreshTimer);
+        const seconds = parseInt(localStorage.getItem('refreshInterval') || '60');
+        if (seconds > 0) {
+            refreshTimer = setInterval(loadData, seconds * 1000);
+        }
+    }
+    
+    function saveRefreshInterval() {
+        const val = document.getElementById('refreshIntervalSelect').value;
+        localStorage.setItem('refreshInterval', val);
+        startAutoRefresh();
     }
     
     function toggleTheme() {
@@ -2577,6 +2591,7 @@ def get_html_template() -> str:
             renderHosts();
             tempUnit = settingsData.temp_unit || 'C';
             document.getElementById('tempUnitSelect').value = tempUnit;
+            document.getElementById('refreshIntervalSelect').value = localStorage.getItem('refreshInterval') || '60';
             updatePresetDropdown();
         } catch (e) {
             console.error('Failed to load settings:', e);
@@ -3264,7 +3279,10 @@ def get_html_template() -> str:
         restoreDeltaRange();
         loadData();
     });
-    setInterval(loadData, 60000); // Auto-refresh every minute
+    // Restore refresh interval setting and start timer
+    const savedInterval = localStorage.getItem('refreshInterval') || '60';
+    document.getElementById('refreshIntervalSelect').value = savedInterval;
+    startAutoRefresh();
     </script>
 </body>
 </html>'''
@@ -3332,6 +3350,8 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 # Filter readings to only configured hosts
                 if configured_hosts:
                     readings = [r for r in readings if r['host'] in configured_hosts]
+                else:
+                    readings = []
                 
                 hosts = list(set(r['host'] for r in readings))
                 

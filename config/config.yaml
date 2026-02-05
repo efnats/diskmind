@@ -1,7 +1,8 @@
 # diskmind configuration
 
 hosts:
-  - 192.168.1.1
+  - ssh:192.168.37.10
+  - push:192.168.28.15
   # - 192.168.1.2
 
 ssh:
@@ -14,3 +15,4 @@ database:
 
 # Threshold preset: backblaze, conservative, relaxed
 threshold_preset: backblaze
+delta_preset: 24h

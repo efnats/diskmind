@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>diskmind</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 24 24' fill='none' stroke='%233b82f6' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 5a7 7 0 0 1 7 7'/%3E%3Cpath d='M12 19a7 7 0 0 1-7-7'/%3E%3Ccircle cx='12' cy='12' r='3.5'/%3E%3Ccircle cx='12' cy='12' r='1.2' fill='%233b82f6' stroke='none'/%3E%3C/svg%3E">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -22,7 +23,8 @@
         .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
         
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-        .header h1 { font-size: 22px; font-weight: 700; }
+        .header h1 { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+        .header h1 .logo-icon { color: var(--accent); flex-shrink: 0; }
         .header-right { display: flex; align-items: center; gap: 12px; }
         .timestamp { font-size: 13px; color: var(--text-muted); }
         .btn { background: var(--bg-hover); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text-secondary); transition: all 0.15s; }
@@ -253,6 +255,10 @@
         .footer { margin-top: 24px; text-align: center; font-size: 11px; color: var(--text-muted); }
         .loading { text-align: center; padding: 40px; color: var(--text-muted); }
         .error { background: rgba(239,68,68,0.1); color: var(--danger); padding: 12px 16px; border-radius: 8px; margin-bottom: 24px; }
+        .connection-banner { display: none; background: rgba(245,158,11,0.12); color: var(--warning); padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; align-items: center; gap: 8px; }
+        .connection-banner.visible { display: flex; }
+        .connection-banner.error { background: rgba(239,68,68,0.1); color: var(--danger); }
+        .connection-banner svg { flex-shrink: 0; }
         
         /* === Settings Modal — fully opaque, hardcoded colors === */
         .settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 1000; pointer-events: none; transition: background 0.3s; }
@@ -379,6 +385,11 @@
         .threshold-content .preset-btn:hover { border-color: #9ca3af; }
         .threshold-content .preset-btn.active { border-color: #3b82f6; background: #eff6ff; color: #3b82f6; }
         .threshold-content .preset-hint { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
+        .threshold-content .copy-from { display: none; align-items: center; gap: 8px; margin: -8px 0 16px 0; font-size: 12px; color: #6b7280; }
+        .threshold-content .copy-from.visible { display: flex; }
+        .threshold-content .copy-from-label { white-space: nowrap; }
+        .threshold-content .copy-from-btn { padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: all 0.15s; }
+        .threshold-content .copy-from-btn:hover { border-color: var(--accent); color: var(--accent); }
         .threshold-content .threshold-section { margin-bottom: 20px; }
         .threshold-content .threshold-section:last-child { margin-bottom: 0; }
         .threshold-content .threshold-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
@@ -429,7 +440,7 @@
 <body>
     <div class="container">
         <header class="header">
-            <h1>diskmind</h1>
+            <h1><svg class="logo-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 5a7 7 0 0 1 7 7"/><path d="M12 19a7 7 0 0 1-7-7"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>diskmind</h1>
             <div class="header-right">
                 <span class="timestamp" id="lastUpdate">Loading...</span>
                 <button class="btn icon-btn" onclick="toggleTheme()" id="themeBtn" title="Toggle theme">
@@ -443,6 +454,10 @@
         </header>
         
         <div id="error" class="error" style="display: none;"></div>
+        <div id="connectionBanner" class="connection-banner">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55"/><path d="M5 12.55a10.94 10.94 0 0 1 5.17-2.39"/><path d="M10.71 5.05A16 16 0 0 1 22.56 9"/><path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg>
+            <span id="connectionMsg">Connection lost — retrying…</span>
+        </div>
         
         <div class="stats">
             <div class="stat" onclick="filterStatus('')">
@@ -568,7 +583,7 @@
         
         <div id="content"><div class="loading">Loading...</div></div>
         
-        <footer class="footer">diskmind v1.5</footer>
+        <footer class="footer">diskmind v{{VERSION}}</footer>
     </div>
     
     <!-- Settings Overlay -->
@@ -680,6 +695,12 @@
                             <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
                         </div>
                         <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
+                        <div class="copy-from" id="copyFromRow">
+                            <span class="copy-from-label">Copy from:</span>
+                            <button class="copy-from-btn" onclick="copyFromPreset('relaxed')">Relaxed</button>
+                            <button class="copy-from-btn" onclick="copyFromPreset('conservative')">Conservative</button>
+                            <button class="copy-from-btn" onclick="copyFromPreset('backblaze')">Backblaze</button>
+                        </div>
                         
                         <div class="threshold-section">
                             <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
@@ -1171,19 +1192,41 @@
         } catch (e) { console.warn('History load failed:', e); }
     }
 
+    let _consecutiveFailures = 0;
+
+    function showConnectionBanner(msg, isError) {
+        const banner = document.getElementById('connectionBanner');
+        document.getElementById('connectionMsg').textContent = msg;
+        banner.classList.toggle('error', !!isError);
+        banner.classList.add('visible');
+    }
+
+    function hideConnectionBanner() {
+        document.getElementById('connectionBanner').classList.remove('visible');
+    }
+
     async function loadData() {
         try {
             const [diskResp] = await Promise.all([
                 fetch('/api/disks'),
                 loadHistory(),
             ]);
-            if (!diskResp.ok) throw new Error('Failed to load data');
+            if (!diskResp.ok) throw new Error('HTTP ' + diskResp.status);
             data = await diskResp.json();
             renderData();
             document.getElementById('error').style.display = 'none';
+            if (_consecutiveFailures > 0) {
+                hideConnectionBanner();
+                _consecutiveFailures = 0;
+            }
         } catch (e) {
-            document.getElementById('error').textContent = 'Error: ' + e.message;
-            document.getElementById('error').style.display = 'block';
+            _consecutiveFailures++;
+            if (_consecutiveFailures === 1) {
+                showConnectionBanner('Connection lost \u2014 retrying\u2026');
+            } else {
+                const s = _consecutiveFailures === 2 ? 'retry' : 'retries';
+                showConnectionBanner('Connection lost \u2014 ' + _consecutiveFailures + ' failed ' + s, _consecutiveFailures >= 5);
+            }
         }
     }
     
@@ -2406,9 +2449,7 @@
         currentThresholdPreset = name;
         updatePresetButtons();
         
-        if (name !== 'custom') {
-            await setPreset(name);
-        }
+        await setPreset(name);
     }
     
     function updatePresetDropdown() {
@@ -2594,6 +2635,15 @@
     
     function updatePresetHint() {
         document.getElementById('presetHint').textContent = PRESET_HINTS[currentThresholdPreset] || '';
+        document.getElementById('copyFromRow').classList.toggle('visible', currentThresholdPreset === 'custom');
+    }
+    
+    function copyFromPreset(name) {
+        const preset = thresholdPresets[name];
+        if (!preset) return;
+        renderThresholdTable('ata', preset.ata || {}, true);
+        renderThresholdTable('nvme', preset.nvme || {}, true);
+        onThresholdChange();
     }
     
     function selectPreset(name) {

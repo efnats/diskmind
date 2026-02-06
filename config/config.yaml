@@ -1,9 +1,9 @@
 # diskmind configuration
 
 hosts:
+  - push:192.168.28.10
   - ssh:root@192.168.37.10
   - push:192.168.28.15
-  - push:192.168.28.10
   # - root@192.168.1.2
 
 ssh:
@@ -14,7 +14,7 @@ database:
   retention_days: 365
 
 # Threshold preset: backblaze, conservative, relaxed
-threshold_preset: backblaze
+threshold_preset: custom
 delta_preset: 1h
 
 # Rate limit for /api/ingest (push requests)

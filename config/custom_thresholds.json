@@ -3,25 +3,25 @@
     "warning": {
       "Reallocated_Sector_Ct": {
         "op": ">",
-        "value": 5,
+        "value": 0,
         "display": "reallocated sectors",
         "id": 5
       },
       "Reported_Uncorrect": {
         "op": ">",
-        "value": 5,
+        "value": 0,
         "display": "reported uncorrectable",
         "id": 187
       },
       "Command_Timeout": {
         "op": ">",
-        "value": 3,
+        "value": 0,
         "display": "command timeout",
         "id": 188
       },
       "Current_Pending_Sector": {
         "op": ">",
-        "value": 8,
+        "value": 0,
         "display": "current pending sectors",
         "id": 197
       },
@@ -30,6 +30,12 @@
         "value": 0,
         "display": "offline uncorrectable",
         "id": 198
+      },
+      "Temperature_Celsius": {
+        "op": ">",
+        "value": 50,
+        "display": "temperature",
+        "id": 194
       }
     },
     "critical": {
@@ -50,6 +56,12 @@
         "value": 10,
         "display": "offline uncorrectable",
         "id": 198
+      },
+      "Temperature_Celsius": {
+        "op": ">",
+        "value": 55,
+        "display": "temperature",
+        "id": 194
       }
     }
   },
@@ -74,6 +86,11 @@
         "op": ">",
         "value": 50,
         "display": "unsafe shutdowns"
+      },
+      "Temperature": {
+        "op": ">",
+        "value": 60,
+        "display": "temperature"
       }
     },
     "critical": {
@@ -96,6 +113,11 @@
         "op": ">",
         "value": 95,
         "display": "percentage used"
+      },
+      "Temperature": {
+        "op": ">",
+        "value": 70,
+        "display": "temperature"
       }
     }
   }

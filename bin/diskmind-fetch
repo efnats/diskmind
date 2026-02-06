@@ -5,6 +5,8 @@ Collects SMART data from remote hosts via SSH and stores in SQLite.
 
 Can also be imported as a library for use by diskmind-view's /api/ingest endpoint.
 """
+import sys
+sys.dont_write_bytecode = True
 
 import argparse
 import csv
@@ -15,6 +17,10 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Shared library
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from diskmind_core import VERSION, parse_simple_yaml
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +116,13 @@ def update_host_status(conn: sqlite3.Connection, host: str, status: str, message
 
 
 def init_database(db_path: str) -> sqlite3.Connection:
-    """Initialize SQLite database."""
+    """Initialize SQLite database with WAL mode for better concurrency."""
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    
+
+    # WAL mode allows concurrent reads while writing
+    conn.execute("PRAGMA journal_mode=WAL")
+
     conn.executescript('''
         CREATE TABLE IF NOT EXISTS readings (
             disk_id TEXT NOT NULL,
@@ -218,50 +227,10 @@ def init_database(db_path: str) -> sqlite3.Connection:
 # SSH Collection (CLI only)
 # ---------------------------------------------------------------------------
 
-def _parse_simple_yaml(text: str) -> dict:
-    """Parse simple YAML (flat keys, string values, simple lists). No PyYAML needed."""
-    result = {}
-    current_key = None
-    current_list = None
-    for raw_line in text.split('\n'):
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip())
-        if indent > 0 and current_key and stripped.startswith('- '):
-            val = stripped[2:].strip()
-            if current_list is None:
-                current_list = []
-                result[current_key] = current_list
-            current_list.append(val)
-        elif indent > 0 and current_key and ':' in stripped:
-            k, _, v = stripped.partition(':')
-            v = v.strip()
-            if not isinstance(result.get(current_key), dict):
-                result[current_key] = {}
-            if v:
-                try:
-                    result[current_key][k.strip()] = int(v)
-                except ValueError:
-                    result[current_key][k.strip()] = v
-        elif ':' in stripped and indent == 0:
-            k, _, v = stripped.partition(':')
-            k = k.strip()
-            v = v.strip()
-            current_key = k
-            current_list = None
-            if v:
-                try:
-                    result[k] = int(v)
-                except ValueError:
-                    result[k] = v
-    return result
-
-
 def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
     with open(config_path) as f:
-        config = _parse_simple_yaml(f.read())
+        config = parse_simple_yaml(f.read())
     
     # Load hosts from file if specified
     if 'hosts_file' in config:
@@ -473,7 +442,7 @@ def main():
             print(f"  Warning: Skipping '{h}' — missing user. Use user@host format (e.g. root@{h})", file=sys.stderr)
     
     # Initialize
-    print("diskmind-fetch - Data Collection")
+    print(f"diskmind-fetch {VERSION}")
     print("=" * 40)
     print(f"Hosts: {len(hosts)}")
     print(f"Database: {db_path}")

@@ -7,6 +7,7 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
+import hmac
 import importlib.machinery
 import importlib.util
 import json
@@ -20,6 +21,10 @@ from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+# Shared library
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+from diskmind_core import VERSION, parse_simple_yaml
 
 # Optional: yaml for config
 try:
@@ -383,46 +388,6 @@ def _find_thresholds_file() -> Path | None:
     return None
 
 
-def _parse_simple_yaml(text: str) -> dict:
-    """Parse simple YAML (flat keys, string values, simple lists). No PyYAML needed."""
-    result = {}
-    current_key = None
-    current_list = None
-    for raw_line in text.split('\n'):
-        stripped = raw_line.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        indent = len(raw_line) - len(raw_line.lstrip())
-        if indent > 0 and current_key and stripped.startswith('- '):
-            val = stripped[2:].strip()
-            if current_list is None:
-                current_list = []
-                result[current_key] = current_list
-            current_list.append(val)
-        elif indent > 0 and current_key and ':' in stripped:
-            k, _, v = stripped.partition(':')
-            v = v.strip()
-            if not isinstance(result.get(current_key), dict):
-                result[current_key] = {}
-            if v:
-                try:
-                    result[current_key][k.strip()] = int(v)
-                except ValueError:
-                    result[current_key][k.strip()] = v
-        elif ':' in stripped and indent == 0:
-            k, _, v = stripped.partition(':')
-            k = k.strip()
-            v = v.strip()
-            current_key = k
-            current_list = None
-            if v:
-                try:
-                    result[k] = int(v)
-                except ValueError:
-                    result[k] = v
-    return result
-
-
 def _get_config_path() -> Path:
     """Get path to config/config.yaml."""
     base_dir = Path(__file__).parent.parent
@@ -435,7 +400,7 @@ def load_config() -> dict:
     if config_path.exists():
         try:
             with open(config_path) as f:
-                return _parse_simple_yaml(f.read())
+                return parse_simple_yaml(f.read())
         except IOError:
             pass
     return {}
@@ -845,11 +810,11 @@ _html_template = None
 _dev_mode = False
 
 def get_html_template() -> str:
-    """Load HTML template from web/dashboard.html."""
+    """Load HTML template from lib/dashboard.html with version injection."""
     global _html_template
     if _dev_mode or _html_template is None:
         path = Path(__file__).parent.parent / 'lib' / 'dashboard.html'
-        _html_template = path.read_text()
+        _html_template = path.read_text().replace('{{VERSION}}', VERSION)
     return _html_template
 
 
@@ -1060,6 +1025,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     if preset_name == 'custom':
                         # Just mark as custom, thresholds already saved above
                         save_config_value('threshold_preset', 'custom')
+                        invalidate_threshold_cache()
                         result['active_preset'] = 'custom'
                     else:
                         presets = load_all_presets()
@@ -1173,7 +1139,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     provided_token = ''
                     if auth_header.startswith('Bearer '):
                         provided_token = auth_header[7:]
-                    if provided_token != expected_token:
+                    if not hmac.compare_digest(provided_token, expected_token):
                         self.send_json({'error': 'Invalid or missing push token'}, 401)
                         return
                 
@@ -1342,7 +1308,7 @@ def main():
     # Start server
     server = ThreadingHTTPServer((args.host, args.port), SmartHTTPHandler)
     
-    print(f"diskmind Web Server")
+    print(f"diskmind {VERSION}")
     print(f"=" * 40)
     print(f"Database: {args.db}")
     print(f"URL: http://{args.host}:{args.port}")

@@ -17,3 +17,9 @@ database:
 threshold_preset: backblaze
 delta_preset: 7d
 push_token: mysecret
+
+# Rate limit for /api/ingest (push requests)
+# Set max_requests to 0 to disable
+rate_limit:
+  max_requests: 10
+  window_seconds: 60

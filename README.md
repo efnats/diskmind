@@ -211,6 +211,11 @@ temp_unit: C
 
 # Optional: require authentication token for push agents
 push_token: mysecrettoken
+
+# Rate limit for push requests (per IP)
+rate_limit:
+  max_requests: 10    # Set to 0 to disable
+  window_seconds: 60
 ```
 
 ### Push Authentication
@@ -222,6 +227,12 @@ When `push_token` is set, all push agents must include the token in their reques
 ```
 
 If a push request arrives without the correct token, the server responds with `401 Unauthorized`.
+
+### Rate Limiting
+
+The `/api/ingest` endpoint is rate-limited per IP address. Default: 10 requests per 60 seconds. Since each agent sends all disks in one request (typically every 15 minutes), this is very permissive.
+
+Set `max_requests: 0` to disable rate limiting entirely. Rate limit settings can also be adjusted in the dashboard under Settings.
 
 ### Collection Methods
 
@@ -356,6 +367,7 @@ When the server rejects data (host not configured or wrong method), data is **no
 | `Rejected: Unknown host: x.x.x.x` | Host not in config — check Pending Approval in dashboard |
 | `Rejected: Host x.x.x.x is configured for SSH, not push` | Switch host to Push mode in dashboard |
 | `Auth failed: Invalid or missing push token` | Server has `push_token` set — add `--token` to agent |
+| `Rate limited. Try again later.` | Too many requests — wait and retry (data will be buffered) |
 
 ## Automation
 

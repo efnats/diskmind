@@ -28,6 +28,34 @@ try:
 except ImportError:
     HAS_YAML = False
 
+from collections import defaultdict
+
+# ---------------------------------------------------------------------------
+# Rate Limiting
+# ---------------------------------------------------------------------------
+
+_rate_limit_requests = defaultdict(list)
+
+def check_rate_limit(ip: str) -> bool:
+    """Return True if request is allowed, False if rate limited."""
+    config = load_config()
+    rate_config = config.get('rate_limit', {})
+    max_requests = rate_config.get('max_requests', 10)
+    window_seconds = rate_config.get('window_seconds', 60)
+    
+    # Disabled if max_requests is 0
+    if max_requests <= 0:
+        return True
+    
+    now = time.time()
+    # Remove timestamps outside the window
+    _rate_limit_requests[ip] = [t for t in _rate_limit_requests[ip] if now - t < window_seconds]
+    # Check limit
+    if len(_rate_limit_requests[ip]) >= max_requests:
+        return False
+    _rate_limit_requests[ip].append(now)
+    return True
+
 # ---------------------------------------------------------------------------
 # Database Functions
 # ---------------------------------------------------------------------------
@@ -997,6 +1025,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'delta_preset': config.get('delta_preset', '7d'),
                     'push_token_set': bool(config.get('push_token')),
                     'retention_days': config.get('database', {}).get('retention_days', 365),
+                    'rate_limit': config.get('rate_limit', {'max_requests': 10, 'window_seconds': 60}),
                 })
 
             elif path == '/api/history':
@@ -1092,6 +1121,14 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     save_config_subkey('database', 'retention_days', int(retention_days))
                     result['retention_days'] = int(retention_days)
                 
+                # Handle rate_limit change
+                rate_limit = data.get('rate_limit')
+                if rate_limit is not None:
+                    max_req = int(rate_limit.get('max_requests', 10))
+                    window = int(rate_limit.get('window_seconds', 60))
+                    save_config_value('rate_limit', {'max_requests': max_req, 'window_seconds': window})
+                    result['rate_limit'] = {'max_requests': max_req, 'window_seconds': window}
+                
                 result['success'] = True
                 self.send_json(result)
             
@@ -1124,6 +1161,12 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'Collect script not configured'}, 500)
             
             elif path == '/api/ingest':
+                # Rate limit check
+                client_ip = self.client_address[0]
+                if not check_rate_limit(client_ip):
+                    self.send_json({'error': 'Rate limited. Try again later.'}, 429)
+                    return
+                
                 # Receive pushed SMART data from agents
                 # Expected: CSV data in body, host in query param
                 params = parse_qs(parsed.query)

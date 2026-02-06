@@ -114,10 +114,11 @@ send_to_server() {
         401) LAST_ERROR="Auth failed: ${server_error}" ;;
         403) LAST_ERROR="Rejected: ${server_error}" ;;
         400) LAST_ERROR="Bad request: ${server_error}" ;;
+        429) LAST_ERROR="Rate limited: ${server_error}" ;;
         *)   LAST_ERROR="Server error (HTTP ${http_code})" ;;
     esac
     
-    # Return 2 for rejected (don't buffer), 1 for unreachable (buffer)
+    # Return 2 for rejected (don't buffer), 1 for unreachable/rate-limited (buffer)
     if [ "$http_code" = "401" ] || [ "$http_code" = "403" ]; then
         return 2
     fi

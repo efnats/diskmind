@@ -250,12 +250,20 @@
         /* === Settings Modal — fully opaque, hardcoded colors === */
         .settings-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 1000; pointer-events: none; transition: background 0.3s; }
         .settings-overlay.open { background: rgba(0,0,0,0.4); pointer-events: auto; }
-        .settings-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; display: flex; flex-direction: column; overflow: hidden; background: #f0f2f5; color: #1a1a2e; box-shadow: -4px 0 24px rgba(0,0,0,0.15); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1001; }
+        .settings-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 420px; max-width: 92vw; display: flex; flex-direction: column; overflow: hidden; background: #f0f2f5; color: #1a1a2e; box-shadow: -4px 0 24px rgba(0,0,0,0.15); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), width 0.25s ease; z-index: 1001; }
+        .settings-panel.wide { width: 580px; }
         .settings-overlay.open .settings-panel { transform: translateX(0); }
         .settings-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; background: #ffffff; border-bottom: 1px solid #d5d9e0; flex-shrink: 0; }
         .settings-header h2 { font-size: 16px; font-weight: 700; margin: 0; }
         .settings-close { width: 28px; height: 28px; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: transparent; color: #888; transition: all 0.15s; }
         .settings-close:hover { background: rgba(0,0,0,0.06); color: #333; }
+        /* Settings Tabs */
+        .settings-tabs { display: flex; background: #ffffff; border-bottom: 1px solid #d5d9e0; padding: 0 20px; flex-shrink: 0; }
+        .settings-tab { padding: 12px 16px; font-size: 13px; font-weight: 500; color: #666; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; }
+        .settings-tab:hover { color: #333; }
+        .settings-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+        .settings-tab-content { display: none; }
+        .settings-tab-content.active { display: block; }
         .settings-body { padding: 8px 20px 20px; overflow-y: auto; flex: 1; scrollbar-width: thin; scrollbar-color: transparent transparent; }
         .settings-body:hover { scrollbar-color: rgba(150,150,150,0.4) transparent; }
         .settings-body::-webkit-scrollbar { width: 6px; }
@@ -279,10 +287,9 @@
         .settings-row .custom-select-trigger:hover { border-color: var(--border); }
         .settings-row .custom-select.open .custom-select-trigger { border-color: var(--accent); }
         .settings-row .custom-select-options { min-width: 150px; right: 0; left: auto; }
-        .settings-row .info-icon:hover::after { left: 0; right: auto; transform: none; max-width: 300px; }
+        .settings-row .info-icon:hover::after, .settings-token-section .info-icon:hover::after { left: -20px; right: auto; transform: none; max-width: 220px; white-space: normal; }
         .settings-token-section { border-top: 1px solid #e2e5ea; margin-top: -1px; }
         .settings-token-label { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }
-        .settings-token-label .info-icon:hover::after { left: 0; right: auto; transform: none; max-width: 300px; }
         .token-inline-input { flex: 1; min-width: 0; text-align: right; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 5px 10px; font-family: 'SF Mono','Consolas',monospace; font-size: 13px; color: var(--text-primary); outline: none; transition: all 0.15s; }
         .token-inline-input:hover { border-color: var(--border); }
         .token-inline-input:focus { border-color: var(--accent); background: var(--bg-primary); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
@@ -313,6 +320,10 @@
         [data-theme="dark"] .settings-panel { background: #141c2b; color: #e2e8f0; box-shadow: -4px 0 24px rgba(0,0,0,0.4); }
         [data-theme="dark"] .settings-header { background: #1a2538; border-color: #2a3a52; }
         [data-theme="dark"] .settings-header h2 { color: #e2e8f0; }
+        [data-theme="dark"] .settings-tabs { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .settings-tab { color: #64748b; }
+        [data-theme="dark"] .settings-tab:hover { color: #94a3b8; }
+        [data-theme="dark"] .settings-tab.active { color: #3b82f6; }
         [data-theme="dark"] .settings-close { background: transparent; color: #64748b; }
         [data-theme="dark"] .settings-close:hover { background: rgba(255,255,255,0.06); color: #94a3b8; }
         [data-theme="dark"] .settings-section-title { color: #e2e8f0; }
@@ -328,46 +339,36 @@
         [data-theme="dark"] .token-action-btn { border-color: #2a3a52; color: #64748b; }
         [data-theme="dark"] .token-action-btn:hover { background: rgba(255,255,255,0.06); color: #94a3b8; border-color: #3a4f6e; }
         
-        /* Threshold Editor */
-        .threshold-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 1000; justify-content: center; align-items: center; backdrop-filter: blur(2px); }
-        .threshold-overlay.visible { display: flex; }
-        .threshold-panel { background: #ffffff; border-radius: 12px; width: 580px; max-width: 95vw; max-height: 85vh; display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.3); }
-        .threshold-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #e5e7eb; background: #f8fafc; border-radius: 12px 12px 0 0; }
-        .threshold-header h2 { margin: 0; font-size: 16px; font-weight: 600; color: #1a1a2e; }
-        .threshold-close { width: 28px; height: 28px; border: none; border-radius: 6px; background: #e5e7eb; color: #666; cursor: pointer; font-size: 14px; }
-        .threshold-close:hover { background: #d1d5db; }
-        .threshold-body { padding: 20px; overflow-y: auto; background: #ffffff; border-radius: 0 0 12px 12px; }
-        .preset-buttons { display: flex; gap: 8px; margin-bottom: 8px; }
-        .preset-btn { flex: 1; padding: 10px 16px; border: 2px solid #e5e7eb; border-radius: 8px; background: #ffffff; color: #374151; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
-        .preset-btn:hover { border-color: #9ca3af; }
-        .preset-btn.active { border-color: #3b82f6; background: #eff6ff; color: #3b82f6; }
-        .preset-hint { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
-        .threshold-section { margin-bottom: 20px; }
-        .threshold-section:last-child { margin-bottom: 0; }
-        .threshold-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
-        .threshold-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .threshold-table th { text-align: left; font-weight: 500; color: #6b7280; padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
-        .threshold-table td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; }
-        .threshold-table td:first-child { color: #374151; }
-        .threshold-input { display: flex; align-items: center; gap: 4px; }
-        .threshold-input select { width: 50px; padding: 4px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; }
-        .threshold-input input { width: 60px; padding: 4px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; text-align: center; }
-        .threshold-input input:disabled, .threshold-input select:disabled { opacity: 0.4; }
-        .threshold-input .unit { font-size: 11px; color: #9ca3af; }
-        [data-theme="dark"] .threshold-panel { background: #1a2332; }
-        [data-theme="dark"] .threshold-header { background: #141c2b; border-color: #2a3a52; }
-        [data-theme="dark"] .threshold-header h2 { color: #e2e8f0; }
-        [data-theme="dark"] .threshold-close { background: #2a3a52; color: #94a3b8; }
-        [data-theme="dark"] .threshold-close:hover { background: #334766; }
-        [data-theme="dark"] .threshold-body { background: #1a2332; }
-        [data-theme="dark"] .preset-btn { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
-        [data-theme="dark"] .preset-btn:hover { border-color: #4a5568; }
-        [data-theme="dark"] .preset-btn.active { background: rgba(59,130,246,0.15); border-color: #3b82f6; }
-        [data-theme="dark"] .preset-hint { color: #64748b; }
-        [data-theme="dark"] .threshold-section-title { color: #94a3b8; }
-        [data-theme="dark"] .threshold-table th { color: #94a3b8; border-color: #2a3a52; }
-        [data-theme="dark"] .threshold-table td { color: #e2e8f0; border-color: #2a3a52; }
-        [data-theme="dark"] .threshold-input select, [data-theme="dark"] .threshold-input input { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
+        /* Threshold Editor (now inside settings panel) */
+        .threshold-content .preset-buttons { display: flex; gap: 8px; margin-bottom: 8px; }
+        .threshold-content .preset-btn { flex: 1; padding: 10px 16px; border: 2px solid #d5d9e0; border-radius: 8px; background: #ffffff; color: #374151; font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .threshold-content .preset-btn:hover { border-color: #9ca3af; }
+        .threshold-content .preset-btn.active { border-color: #3b82f6; background: #eff6ff; color: #3b82f6; }
+        .threshold-content .preset-hint { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
+        .threshold-content .threshold-section { margin-bottom: 20px; }
+        .threshold-content .threshold-section:last-child { margin-bottom: 0; }
+        .threshold-content .threshold-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
+        .threshold-content .threshold-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .threshold-content .threshold-table th { text-align: left; font-weight: 500; color: #6b7280; padding: 8px 8px; border-bottom: 1px solid #e5e7eb; }
+        .threshold-content .threshold-table th.col-warning { color: #d97706; }
+        .threshold-content .threshold-table th.col-critical { color: #dc2626; }
+        .threshold-content .threshold-table td { padding: 8px 8px; border-bottom: 1px solid #e5e7eb; }
+        .threshold-content .threshold-table td:first-child { color: #374151; }
+        .threshold-content .threshold-input { display: flex; align-items: center; gap: 4px; }
+        .threshold-content .threshold-input select { width: 54px; padding: 5px 4px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; }
+        .threshold-content .threshold-input input { width: 60px; padding: 5px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; text-align: center; }
+        .threshold-content .threshold-input input:disabled, .threshold-content .threshold-input select:disabled { opacity: 0.4; }
+        .threshold-content .threshold-input .unit { font-size: 11px; color: #9ca3af; }
+        [data-theme="dark"] .threshold-content .preset-btn { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .threshold-content .preset-btn:hover { border-color: #4a5568; }
+        [data-theme="dark"] .threshold-content .preset-btn.active { background: rgba(59,130,246,0.15); border-color: #3b82f6; }
+        [data-theme="dark"] .threshold-content .preset-hint { color: #64748b; }
+        [data-theme="dark"] .threshold-content .threshold-section-title { color: #94a3b8; }
+        [data-theme="dark"] .threshold-content .threshold-table th { color: #94a3b8; border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-content .threshold-table th.col-warning { color: #fbbf24; }
+        [data-theme="dark"] .threshold-content .threshold-table th.col-critical { color: #f87171; }
+        [data-theme="dark"] .threshold-content .threshold-table td { color: #e2e8f0; border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-content .threshold-input select, [data-theme="dark"] .threshold-content .threshold-input input { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
         
         @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
     </style>
@@ -515,119 +516,130 @@
     
     <!-- Settings Overlay -->
     <div id="settingsOverlay" class="settings-overlay" onclick="if(event.target===this)toggleSettings()">
-        <div class="settings-panel" onclick="event.stopPropagation()">
+        <div class="settings-panel" id="settingsPanel" onclick="event.stopPropagation()">
             <div class="settings-header">
                 <h2>Settings</h2>
                 <button class="settings-close" onclick="toggleSettings()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
             </div>
+            <div class="settings-tabs">
+                <div class="settings-tab active" data-tab="general" onclick="switchSettingsTab('general')">General</div>
+                <div class="settings-tab" data-tab="thresholds" onclick="switchSettingsTab('thresholds')">Thresholds</div>
+            </div>
             <div class="settings-body">
-                <div class="settings-row">
-                    <span class="settings-row-label">Temperature unit</span>
-                    <div class="custom-select" id="tempUnitWrapper">
-                        <div class="custom-select-trigger" onclick="toggleDropdown('tempUnitWrapper')">
-                            <span class="custom-select-value">Celsius (°C)</span>
-                            <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                <!-- General Tab -->
+                <div class="settings-tab-content active" id="tabGeneral">
+                    <div class="settings-row">
+                        <span class="settings-row-label">Temperature unit</span>
+                        <div class="custom-select" id="tempUnitWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('tempUnitWrapper')">
+                                <span class="custom-select-value">Celsius (°C)</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option selected" data-value="C">Celsius (°C)</div>
+                                <div class="custom-select-option" data-value="F">Fahrenheit (°F)</div>
+                            </div>
                         </div>
-                        <div class="custom-select-options">
-                            <div class="custom-select-option selected" data-value="C">Celsius (°C)</div>
-                            <div class="custom-select-option" data-value="F">Fahrenheit (°F)</div>
+                        <input type="hidden" id="tempUnitSelect" value="C">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Auto-refresh</span>
+                        <div class="custom-select" id="refreshIntervalWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('refreshIntervalWrapper')">
+                                <span class="custom-select-value">1 minute</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="0">Off</div>
+                                <div class="custom-select-option" data-value="30">30 seconds</div>
+                                <div class="custom-select-option selected" data-value="60">1 minute</div>
+                                <div class="custom-select-option" data-value="120">2 minutes</div>
+                                <div class="custom-select-option" data-value="300">5 minutes</div>
+                                <div class="custom-select-option" data-value="600">10 minutes</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="refreshIntervalSelect" value="60">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Data retention <span class="info-icon" data-tip="How long SMART readings are kept. Older data is deleted automatically.">ⓘ</span></span>
+                        <div class="custom-select" id="retentionWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('retentionWrapper')">
+                                <span class="custom-select-value">1 year</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="30">30 days</div>
+                                <div class="custom-select-option" data-value="90">90 days</div>
+                                <div class="custom-select-option" data-value="180">6 months</div>
+                                <div class="custom-select-option selected" data-value="365">1 year</div>
+                                <div class="custom-select-option" data-value="730">2 years</div>
+                                <div class="custom-select-option" data-value="0">Forever</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="retentionSelect" value="365">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Rate limit <span class="info-icon" data-tip="Limit push requests per IP address. Set to 0 to disable rate limiting.">ⓘ</span></span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <input type="number" id="rateLimitMax" class="rate-limit-input" value="10" min="0" max="1000" style="width: 60px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; text-align: center;" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                            <span style="font-size: 12px; color: var(--text-muted);">per</span>
+                            <input type="number" id="rateLimitWindow" class="rate-limit-input" value="60" min="1" max="3600" style="width: 60px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; text-align: center;" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                            <span style="font-size: 12px; color: var(--text-muted);">sec</span>
                         </div>
                     </div>
-                    <input type="hidden" id="tempUnitSelect" value="C">
-                </div>
-                
-                <div class="settings-row">
-                    <span class="settings-row-label">Auto-refresh</span>
-                    <div class="custom-select" id="refreshIntervalWrapper">
-                        <div class="custom-select-trigger" onclick="toggleDropdown('refreshIntervalWrapper')">
-                            <span class="custom-select-value">1 minute</span>
-                            <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                    
+                    <div class="settings-token-section">
+                        <div class="settings-row" style="border-bottom: none; padding-bottom: 10px;">
+                            <span class="settings-row-label">Push token <span class="info-icon" data-tip="Shared secret for authenticating push agents. Leave empty to allow unauthenticated push.">ⓘ</span></span>
+                            <input type="password" id="pushTokenInput" class="token-inline-input" placeholder="Not set" onblur="savePushToken()" onkeydown="if(event.key==='Enter'){this.blur()}">
                         </div>
-                        <div class="custom-select-options">
-                            <div class="custom-select-option" data-value="0">Off</div>
-                            <div class="custom-select-option" data-value="30">30 seconds</div>
-                            <div class="custom-select-option selected" data-value="60">1 minute</div>
-                            <div class="custom-select-option" data-value="120">2 minutes</div>
-                            <div class="custom-select-option" data-value="300">5 minutes</div>
-                            <div class="custom-select-option" data-value="600">10 minutes</div>
-                        </div>
-                    </div>
-                    <input type="hidden" id="refreshIntervalSelect" value="60">
-                </div>
-                
-                <div class="settings-row">
-                    <span class="settings-row-label">Data retention <span class="info-icon" data-tip="How long SMART readings are kept. Older data is deleted automatically.">ⓘ</span></span>
-                    <div class="custom-select" id="retentionWrapper">
-                        <div class="custom-select-trigger" onclick="toggleDropdown('retentionWrapper')">
-                            <span class="custom-select-value">1 year</span>
-                            <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                        </div>
-                        <div class="custom-select-options">
-                            <div class="custom-select-option" data-value="30">30 days</div>
-                            <div class="custom-select-option" data-value="90">90 days</div>
-                            <div class="custom-select-option" data-value="180">6 months</div>
-                            <div class="custom-select-option selected" data-value="365">1 year</div>
-                            <div class="custom-select-option" data-value="730">2 years</div>
-                            <div class="custom-select-option" data-value="0">Forever</div>
+                        <div class="token-actions-row">
+                            <button class="token-action-btn" onclick="toggleTokenVisibility()" id="tokenVisBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                Show
+                            </button>
+                            <button class="token-action-btn" onclick="generateToken()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                                Generate
+                            </button>
+                            <button class="token-action-btn" onclick="copyToken()" id="copyTokenBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                Copy
+                            </button>
                         </div>
                     </div>
-                    <input type="hidden" id="retentionSelect" value="365">
                 </div>
                 
-                <div class="settings-token-section">
-                    <div class="settings-row" style="border-bottom: none; padding-bottom: 10px;">
-                        <span class="settings-row-label">Push token <span class="info-icon" data-tip="Shared secret for authenticating push agents. Leave empty to allow unauthenticated push.">ⓘ</span></span>
-                        <input type="password" id="pushTokenInput" class="token-inline-input" placeholder="Not set" onblur="savePushToken()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                <!-- Thresholds Tab -->
+                <div class="settings-tab-content" id="tabThresholds">
+                    <div class="threshold-content">
+                        <div class="preset-buttons">
+                            <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
+                            <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
+                            <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
+                            <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
+                        </div>
+                        <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
+                        
+                        <div class="threshold-section">
+                            <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
+                            <table class="threshold-table" id="ataThresholds">
+                                <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        
+                        <div class="threshold-section">
+                            <div class="threshold-section-title">NVMe</div>
+                            <table class="threshold-table" id="nvmeThresholds">
+                                <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
                     </div>
-                    <div class="token-actions-row">
-                        <button class="token-action-btn" onclick="toggleTokenVisibility()" id="tokenVisBtn">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                            Show
-                        </button>
-                        <button class="token-action-btn" onclick="generateToken()">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-                            Generate
-                        </button>
-                        <button class="token-action-btn" onclick="copyToken()" id="copyTokenBtn">
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            Copy
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Threshold Editor Overlay -->
-    <div class="threshold-overlay" id="thresholdOverlay" onclick="if(event.target===this)toggleThresholdEditor()">
-        <div class="threshold-panel">
-            <div class="threshold-header">
-                <h2>Threshold Settings</h2>
-                <button class="threshold-close" onclick="toggleThresholdEditor()">✕</button>
-            </div>
-            <div class="threshold-body">
-                <div class="preset-buttons">
-                    <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
-                    <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
-                    <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
-                    <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
-                </div>
-                <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
-                
-                <div class="threshold-section">
-                    <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
-                    <table class="threshold-table" id="ataThresholds">
-                        <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
-                </div>
-                
-                <div class="threshold-section">
-                    <div class="threshold-section-title">NVMe</div>
-                    <table class="threshold-table" id="nvmeThresholds">
-                        <thead><tr><th>Attribute</th><th>Warning</th><th>Critical</th></tr></thead>
-                        <tbody></tbody>
-                    </table>
                 </div>
             </div>
         </div>
@@ -1719,6 +1731,29 @@
         }
     }
     
+    async function saveRateLimit() {
+        const maxReq = parseInt(document.getElementById('rateLimitMax').value) || 10;
+        const window = parseInt(document.getElementById('rateLimitWindow').value) || 60;
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({rate_limit: {max_requests: maxReq, window_seconds: window}})
+            });
+            const result = await res.json();
+            if (result.success) {
+                // Visual feedback
+                const inputs = document.querySelectorAll('.rate-limit-input');
+                inputs.forEach(inp => {
+                    inp.style.borderColor = 'var(--success)';
+                    setTimeout(() => inp.style.borderColor = '', 1500);
+                });
+            }
+        } catch (e) {
+            console.error('Failed to save rate limit:', e);
+        }
+    }
+    
     function toggleTokenVisibility() {
         const input = document.getElementById('pushTokenInput');
         const btn = document.getElementById('tokenVisBtn');
@@ -1785,14 +1820,38 @@
     
     // --- Settings Panel ---
     
-    function toggleSettings() {
+    function toggleSettings(tab = 'general') {
         const overlay = document.getElementById('settingsOverlay');
         const isOpen = overlay.classList.contains('open');
         if (!isOpen) {
             overlay.classList.add('open');
+            switchSettingsTab(tab);
             loadSettings();
         } else {
             overlay.classList.remove('open');
+            // Reset to narrow width when closing
+            document.getElementById('settingsPanel').classList.remove('wide');
+        }
+    }
+    
+    function switchSettingsTab(tab) {
+        const panel = document.getElementById('settingsPanel');
+        
+        // Update tab buttons
+        document.querySelectorAll('.settings-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.tab === tab);
+        });
+        
+        // Update tab content
+        document.getElementById('tabGeneral').classList.toggle('active', tab === 'general');
+        document.getElementById('tabThresholds').classList.toggle('active', tab === 'thresholds');
+        
+        // Adjust panel width
+        if (tab === 'thresholds') {
+            panel.classList.add('wide');
+            renderThresholdEditor();
+        } else {
+            panel.classList.remove('wide');
         }
     }
     
@@ -1805,6 +1864,10 @@
             setDropdownValue('tempUnitWrapper', tempUnit);
             setDropdownValue('refreshIntervalWrapper', localStorage.getItem('refreshInterval') || '60');
             setDropdownValue('retentionWrapper', String(settingsData.retention_days || 365));
+            // Rate limit settings
+            const rateLimit = settingsData.rate_limit || {max_requests: 10, window_seconds: 60};
+            document.getElementById('rateLimitMax').value = rateLimit.max_requests;
+            document.getElementById('rateLimitWindow').value = rateLimit.window_seconds;
             // Show placeholder based on whether token is set
             const tokenInput = document.getElementById('pushTokenInput');
             tokenInput.value = '';
@@ -2291,12 +2354,13 @@
     let currentThresholdPreset = 'backblaze';
     
     function toggleThresholdEditor() {
-        const overlay = document.getElementById('thresholdOverlay');
-        if (overlay.classList.contains('visible')) {
-            overlay.classList.remove('visible');
+        // Open settings panel with thresholds tab
+        const overlay = document.getElementById('settingsOverlay');
+        if (overlay.classList.contains('open')) {
+            // Already open, just switch to thresholds tab
+            switchSettingsTab('thresholds');
         } else {
-            overlay.classList.add('visible');
-            renderThresholdEditor();
+            toggleSettings('thresholds');
         }
     }
     

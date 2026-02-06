@@ -169,8 +169,14 @@ The first time the agent pushes, the host will appear in the dashboard under **P
 # Push data to server
 ./bin/diskmind-scan --push http://server:8080 --host 192.168.1.10
 
+# With authentication token
+./bin/diskmind-scan --push http://server:8080 --host 192.168.1.10 --token mysecrettoken
+
 # With logging
 ./bin/diskmind-scan --push http://server:8080 --host 192.168.1.10 --log /var/log/diskmind.log
+
+# Custom buffer directory (default: /var/lib/diskmind/buffer)
+./bin/diskmind-scan --push http://server:8080 --host 192.168.1.10 --buffer-dir /tmp/diskmind-buffer
 
 # Output CSV to stdout (used internally by SSH mode)
 ./bin/diskmind-scan
@@ -202,7 +208,20 @@ delta_preset: 7d
 
 # Temperature display unit: C or F
 temp_unit: C
+
+# Optional: require authentication token for push agents
+push_token: mysecrettoken
 ```
+
+### Push Authentication
+
+When `push_token` is set, all push agents must include the token in their requests. This prevents unauthorized hosts from submitting data. Configure the token on the server in `config.yaml`, then pass it to each agent:
+
+```bash
+./bin/diskmind-scan --push http://server:8080 --host 192.168.1.10 --token mysecrettoken
+```
+
+If a push request arrives without the correct token, the server responds with `401 Unauthorized`.
 
 ### Collection Methods
 
@@ -336,6 +355,7 @@ When the server rejects data (host not configured or wrong method), data is **no
 | `Server unreachable, buffering data` | Server is down or wrong URL/port |
 | `Rejected: Unknown host: x.x.x.x` | Host not in config — check Pending Approval in dashboard |
 | `Rejected: Host x.x.x.x is configured for SSH, not push` | Switch host to Push mode in dashboard |
+| `Auth failed: Invalid or missing push token` | Server has `push_token` set — add `--token` to agent |
 
 ## Automation
 

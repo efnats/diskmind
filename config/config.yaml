@@ -22,4 +22,5 @@ delta_preset: 1h
 rate_limit:
   max_requests: 10
   window_seconds: 60
+
 push_token: mysecret

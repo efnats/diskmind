@@ -1,0 +1,102 @@
+{
+  "ata": {
+    "warning": {
+      "Reallocated_Sector_Ct": {
+        "op": ">",
+        "value": 5,
+        "display": "reallocated sectors",
+        "id": 5
+      },
+      "Reported_Uncorrect": {
+        "op": ">",
+        "value": 5,
+        "display": "reported uncorrectable",
+        "id": 187
+      },
+      "Command_Timeout": {
+        "op": ">",
+        "value": 3,
+        "display": "command timeout",
+        "id": 188
+      },
+      "Current_Pending_Sector": {
+        "op": ">",
+        "value": 8,
+        "display": "current pending sectors",
+        "id": 197
+      },
+      "Offline_Uncorrectable": {
+        "op": ">",
+        "value": 0,
+        "display": "offline uncorrectable",
+        "id": 198
+      }
+    },
+    "critical": {
+      "Reallocated_Sector_Ct": {
+        "op": ">",
+        "value": 100,
+        "display": "reallocated sectors",
+        "id": 5
+      },
+      "Current_Pending_Sector": {
+        "op": ">",
+        "value": 10,
+        "display": "current pending sectors",
+        "id": 197
+      },
+      "Offline_Uncorrectable": {
+        "op": ">",
+        "value": 10,
+        "display": "offline uncorrectable",
+        "id": 198
+      }
+    }
+  },
+  "nvme": {
+    "warning": {
+      "Available_Spare": {
+        "op": "<",
+        "value": 20,
+        "display": "available spare"
+      },
+      "Percentage_Used": {
+        "op": ">",
+        "value": 80,
+        "display": "percentage used"
+      },
+      "Error_Information_Log_Entries": {
+        "op": ">",
+        "value": 0,
+        "display": "error log entries"
+      },
+      "Unsafe_Shutdowns": {
+        "op": ">",
+        "value": 50,
+        "display": "unsafe shutdowns"
+      }
+    },
+    "critical": {
+      "Critical_Warning": {
+        "op": ">",
+        "value": 0,
+        "display": "critical warning"
+      },
+      "Media_and_Data_Integrity_Errors": {
+        "op": ">",
+        "value": 0,
+        "display": "media errors"
+      },
+      "Available_Spare": {
+        "op": "<",
+        "value": 10,
+        "display": "available spare"
+      },
+      "Percentage_Used": {
+        "op": ">",
+        "value": 95,
+        "display": "percentage used"
+      }
+    }
+  }
+}

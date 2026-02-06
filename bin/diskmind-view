@@ -573,14 +573,19 @@ def load_thresholds() -> dict:
     config = load_config()
     preset_name = config.get('threshold_preset', DEFAULT_PRESET)
     
-    # If custom preset, load from config
+    # If custom preset, load from config/custom_thresholds.json
     if preset_name == 'custom':
-        custom = config.get('custom_thresholds')
-        if custom:
-            return {
-                'ata': custom.get('ata', {}),
-                'nvme': custom.get('nvme', {}),
-            }
+        custom_path = _get_config_path().parent / 'custom_thresholds.json'
+        if custom_path.exists():
+            try:
+                with open(custom_path) as f:
+                    custom = json.load(f)
+                return {
+                    'ata': custom.get('ata', {}),
+                    'nvme': custom.get('nvme', {}),
+                }
+            except (json.JSONDecodeError, IOError):
+                pass
     
     presets = load_all_presets()
     
@@ -611,36 +616,12 @@ def load_thresholds() -> dict:
 
 
 def save_custom_thresholds(thresholds: dict):
-    """Save custom thresholds to config.yaml."""
-    config_path = get_config_path()
-    try:
-        with open(config_path, 'r') as f:
-            lines = f.readlines()
-    except FileNotFoundError:
-        lines = []
-    
-    # Remove existing custom_thresholds section if present
-    new_lines = []
-    skip_until_unindent = False
-    for line in lines:
-        if line.startswith('custom_thresholds:'):
-            skip_until_unindent = True
-            continue
-        if skip_until_unindent:
-            if line.startswith(' ') or line.startswith('\t') or line.strip() == '':
-                continue
-            else:
-                skip_until_unindent = False
-        new_lines.append(line)
-    
-    # Add custom_thresholds as YAML
-    import yaml
-    custom_yaml = yaml.dump({'custom_thresholds': thresholds}, default_flow_style=False)
-    new_lines.append('\n')
-    new_lines.append(custom_yaml)
-    
-    with open(config_path, 'w') as f:
-        f.writelines(new_lines)
+    """Save custom thresholds to config/custom_thresholds.json."""
+    custom_path = _get_config_path().parent / 'custom_thresholds.json'
+    custom_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(custom_path, 'w') as f:
+        json.dump(thresholds, f, indent=2)
+        f.write('\n')
 
 
 # Cache thresholds at module level (invalidated on settings change)
@@ -731,6 +712,9 @@ CRITICAL_STATE_ATTRS = {
     'Critical_Warning',
     'Percentage_Used',
     'Available_Spare',
+    'Temperature_Celsius',
+    'Airflow_Temperature_Cel',
+    'Temperature',
 }
 
 

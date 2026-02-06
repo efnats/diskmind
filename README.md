@@ -14,7 +14,6 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 - **Web dashboard** — sortable tables, dark/light theme, status filtering, custom dropdowns
 - **Inline host editing** — edit hostname, SSH user, and collection method directly in the dashboard
 - **Settings panel** — manage hosts and temperature unit (°C/°F) from the dashboard
-- **Static reports** — generate standalone HTML files for sharing or archival
 - **Trend tracking** — sparkline charts showing attribute history with delta indicators
 - **Delta-based alerting** — cumulative counters only trigger warnings if they increased within the selected time range
 - **Configurable thresholds** — three presets (relaxed, conservative, backblaze) with custom threshold editor
@@ -31,7 +30,7 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 diskmind/
   bin/                User-facing executables
     diskmind-fetch      Orchestrates SSH collection, writes to SQLite
-    diskmind-view       Serves web dashboard or generates static HTML
+    diskmind-view       Serves web dashboard
     diskmind-scan       Runs on target hosts, calls smartctl, outputs CSV or pushes to server
   config/             User-editable settings
     config.yaml         Hosts, SSH, database, threshold preset, delta range
@@ -57,7 +56,6 @@ The central server connects via SSH, runs `diskmind-scan` on the target, and col
 ┌─────────────┐                             │  SQLite          │        │  diskmind-view   │
 │  Host B      │ ◄── SSH: run scan ──────── │                  │        │                  │
 │  (smartctl)  │ ──── CSV stdout ─────────► │                  │        │  Web dashboard   │
-└─────────────┘                             └────────┬─────────┘        │  or static HTML  │
                                                      │                  │                  │
                                                 data/smart.db ─────────►│                  │
                                                                         └──────────────────┘
@@ -85,7 +83,7 @@ The agent runs on the target host (via cron), collects SMART data locally, and p
 |-----------|------|------|
 | **scan** | `bin/diskmind-scan` | Runs on each host, calls `smartctl`, outputs CSV or pushes to server |
 | **fetch** | `bin/diskmind-fetch` | Pushes scan to SSH hosts, parses results, writes to SQLite |
-| **view** | `bin/diskmind-view` | Reads SQLite, serves web dashboard or generates static HTML |
+| **view** | `bin/diskmind-view` | Reads SQLite, serves web dashboard |
 
 ## Requirements
 
@@ -156,9 +154,6 @@ The first time the agent pushes, the host will appear in the dashboard under **P
 # Web server (default port 8080)
 ./bin/diskmind-view --port 8080
 
-# Static HTML report
-./bin/diskmind-view -o report.html
-
 # Custom database path
 ./bin/diskmind-view --db /path/to/smart.db
 ```
@@ -189,7 +184,7 @@ The first time the agent pushes, the host will appear in the dashboard under **P
 ```yaml
 hosts:
   - ssh:stefan@192.168.1.10     # SSH with specific user
-  - ssh:192.168.1.11            # SSH with default user
+  - ssh:root@192.168.1.11       # SSH with root
   - push:192.168.1.12           # Agent push
   - admin@192.168.1.13          # Legacy format (treated as SSH)
 

@@ -10,14 +10,16 @@
         "critical": {
           "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 100, "display": "reallocated sectors" },
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 10,  "display": "pending sectors" },
-          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 10,  "display": "uncorrectable sectors" }
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 10,  "display": "uncorrectable sectors" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 55,  "display": "temperature °C" }
         },
         "warning": {
           "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 0, "display": "reallocated sectors" },
           "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 0, "display": "uncorrectable errors" },
           "Command_Timeout":        { "id": 188,  "op": ">", "value": 0, "display": "command timeouts" },
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 0, "display": "pending sectors" },
-          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" }
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 45, "display": "temperature °C" }
         }
       },
       "nvme": {
@@ -25,13 +27,15 @@
           "Critical_Warning":                { "op": ">", "value": 0,  "display": "critical warning" },
           "Media_and_Data_Integrity_Errors": { "op": ">", "value": 0,  "display": "media errors" },
           "Available_Spare":                 { "op": "<", "value": 10, "display": "spare capacity low" },
-          "Percentage_Used":                 { "op": ">", "value": 95, "display": "life used" }
+          "Percentage_Used":                 { "op": ">", "value": 95, "display": "life used" },
+          "Temperature":                     { "op": ">", "value": 70, "display": "temperature °C" }
         },
         "warning": {
           "Percentage_Used":                 { "op": ">", "value": 80, "display": "life used" },
           "Available_Spare":                 { "op": "<", "value": 20, "display": "spare capacity" },
           "Error_Information_Log_Entries":    { "op": ">", "value": 0,  "display": "error log entries" },
-          "Unsafe_Shutdowns":                { "op": ">", "value": 50, "display": "unsafe shutdowns" }
+          "Unsafe_Shutdowns":                { "op": ">", "value": 50, "display": "unsafe shutdowns" },
+          "Temperature":                     { "op": ">", "value": 55, "display": "temperature °C" }
         }
       }
     },
@@ -44,14 +48,16 @@
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 5,   "display": "pending sectors" },
           "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 5,   "display": "uncorrectable sectors" },
           "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 10,  "display": "uncorrectable errors" },
-          "Command_Timeout":        { "id": 188,  "op": ">", "value": 50,  "display": "command timeouts" }
+          "Command_Timeout":        { "id": 188,  "op": ">", "value": 50,  "display": "command timeouts" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 55,  "display": "temperature °C" }
         },
         "warning": {
           "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 0, "display": "reallocated sectors" },
           "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 0, "display": "uncorrectable errors" },
           "Command_Timeout":        { "id": 188,  "op": ">", "value": 0, "display": "command timeouts" },
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 0, "display": "pending sectors" },
-          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" }
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 0, "display": "uncorrectable sectors" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 45, "display": "temperature °C" }
         }
       },
       "nvme": {
@@ -59,13 +65,15 @@
           "Critical_Warning":                { "op": ">", "value": 0,  "display": "critical warning" },
           "Media_and_Data_Integrity_Errors": { "op": ">", "value": 0,  "display": "media errors" },
           "Available_Spare":                 { "op": "<", "value": 15, "display": "spare capacity low" },
-          "Percentage_Used":                 { "op": ">", "value": 85, "display": "life used" }
+          "Percentage_Used":                 { "op": ">", "value": 85, "display": "life used" },
+          "Temperature":                     { "op": ">", "value": 70, "display": "temperature °C" }
         },
         "warning": {
           "Percentage_Used":                 { "op": ">", "value": 70, "display": "life used" },
           "Available_Spare":                 { "op": "<", "value": 25, "display": "spare capacity" },
           "Error_Information_Log_Entries":    { "op": ">", "value": 0,  "display": "error log entries" },
-          "Unsafe_Shutdowns":                { "op": ">", "value": 25, "display": "unsafe shutdowns" }
+          "Unsafe_Shutdowns":                { "op": ">", "value": 25, "display": "unsafe shutdowns" },
+          "Temperature":                     { "op": ">", "value": 55, "display": "temperature °C" }
         }
       }
     },
@@ -76,14 +84,16 @@
         "critical": {
           "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 500, "display": "reallocated sectors" },
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 100, "display": "pending sectors" },
-          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 100, "display": "uncorrectable sectors" }
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 100, "display": "uncorrectable sectors" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 60,  "display": "temperature °C" }
         },
         "warning": {
           "Reallocated_Sector_Ct":  { "id": 5,   "op": ">", "value": 10,  "display": "reallocated sectors" },
           "Reported_Uncorrect":     { "id": 187,  "op": ">", "value": 10,  "display": "uncorrectable errors" },
           "Command_Timeout":        { "id": 188,  "op": ">", "value": 100, "display": "command timeouts" },
           "Current_Pending_Sector": { "id": 197,  "op": ">", "value": 5,   "display": "pending sectors" },
-          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 5,   "display": "uncorrectable sectors" }
+          "Offline_Uncorrectable":  { "id": 198,  "op": ">", "value": 5,   "display": "uncorrectable sectors" },
+          "Temperature_Celsius":    { "id": 194,  "op": ">", "value": 50,  "display": "temperature °C" }
         }
       },
       "nvme": {
@@ -91,13 +101,15 @@
           "Critical_Warning":                { "op": ">", "value": 0,   "display": "critical warning" },
           "Media_and_Data_Integrity_Errors": { "op": ">", "value": 10,  "display": "media errors" },
           "Available_Spare":                 { "op": "<", "value": 5,   "display": "spare capacity low" },
-          "Percentage_Used":                 { "op": ">", "value": 100, "display": "life used" }
+          "Percentage_Used":                 { "op": ">", "value": 100, "display": "life used" },
+          "Temperature":                     { "op": ">", "value": 75,  "display": "temperature °C" }
         },
         "warning": {
           "Percentage_Used":                 { "op": ">", "value": 90,  "display": "life used" },
           "Available_Spare":                 { "op": "<", "value": 15,  "display": "spare capacity" },
           "Error_Information_Log_Entries":    { "op": ">", "value": 10,  "display": "error log entries" },
-          "Unsafe_Shutdowns":                { "op": ">", "value": 100, "display": "unsafe shutdowns" }
+          "Unsafe_Shutdowns":                { "op": ">", "value": 100, "display": "unsafe shutdowns" },
+          "Temperature":                     { "op": ">", "value": 60,  "display": "temperature °C" }
         }
       }
     }

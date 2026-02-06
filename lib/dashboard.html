@@ -61,8 +61,13 @@
         .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
         .filter-group-controls > input:not(.search-input) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
         .filter-group-end { margin-left: auto; }
-        .search-input { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
-        .search-input:focus { outline: none; border-color: var(--accent); }
+        .search-input { padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 13px; width: 160px; outline: none; transition: all 0.15s; }
+        .search-input::placeholder { color: var(--text-muted); }
+        .search-input:hover { border-color: #b0b7c3; }
+        .search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        [data-theme="dark"] .search-input { border-color: #2a3a52; background: transparent; }
+        [data-theme="dark"] .search-input:hover { border-color: #3d5a80; }
+        [data-theme="dark"] .search-input:focus { border-color: #3b82f6; }
         
         /* Custom Dropdown */
         .custom-select { position: relative; min-width: 120px; }
@@ -90,6 +95,7 @@
         .add-host-input-group { display: flex; align-items: center; gap: 4px; }
         .add-host-input { padding: 6px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; width: 130px; font-family: 'SF Mono', 'Consolas', monospace; }
         .add-host-input.add-host-user { width: 70px; }
+        .add-host-input.add-host-port { width: 50px; text-align: center; }
         .add-host-at { color: var(--text-muted); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
         .add-host-input:focus { outline: none; }
         .add-host-confirm { padding: 6px 8px; border: none; border-radius: 6px; background: var(--success); color: white; font-size: 12px; cursor: pointer; }
@@ -117,7 +123,8 @@
         .host-edit-input { padding: 4px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 12px; font-family: 'SF Mono', 'Consolas', monospace; }
         .host-edit-input:focus { outline: none; border-color: var(--accent); }
         .host-edit-input.host-edit-user { width: 60px; }
-        .host-edit-input.host-edit-ip { width: 145px; }
+        .host-edit-input.host-edit-ip { width: 120px; }
+        .host-edit-input.host-edit-port { width: 45px; text-align: center; }
         .host-edit-at { color: var(--text-muted); font-size: 12px; }
         .host-edit-ssh-fields { display: inline-flex; align-items: center; gap: 4px; }
         .host-edit-confirm { padding: 4px 8px; border: none; border-radius: 4px; background: var(--success); color: white; font-size: 12px; cursor: pointer; }
@@ -290,9 +297,33 @@
         .settings-row .info-icon:hover::after, .settings-token-section .info-icon:hover::after { left: -20px; right: auto; transform: none; max-width: 220px; white-space: normal; }
         .settings-token-section { border-top: 1px solid #e2e5ea; margin-top: -1px; }
         .settings-token-label { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }
-        .token-inline-input { flex: 1; min-width: 0; text-align: right; border: 1px solid transparent; border-radius: 6px; background: transparent; padding: 5px 10px; font-family: 'SF Mono','Consolas',monospace; font-size: 13px; color: var(--text-primary); outline: none; transition: all 0.15s; }
-        .token-inline-input:hover { border-color: var(--border); }
-        .token-inline-input:focus { border-color: var(--accent); background: var(--bg-primary); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        /* Unified input styling */
+        .settings-input { border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; padding: 6px 10px; font-size: 13px; color: var(--text-primary); outline: none; transition: all 0.15s; }
+        .settings-input:hover { border-color: #b0b7c3; }
+        .settings-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        .settings-input:disabled { opacity: 0.4; cursor: not-allowed; }
+        .settings-input:disabled:hover { border-color: #d5d9e0; }
+        .settings-input::placeholder { color: var(--text-muted); }
+        /* Number input - no spinners */
+        .settings-input[type="number"] { -moz-appearance: textfield; }
+        .settings-input[type="number"]::-webkit-outer-spin-button, .settings-input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        /* Specific sizes */
+        .settings-input.input-token { width: 180px; text-align: right; font-family: 'SF Mono','Consolas',monospace; }
+        .settings-input.input-small { width: 54px; text-align: center; }
+        .settings-input.input-medium { width: 64px; text-align: center; }
+        /* Dark mode */
+        [data-theme="dark"] .settings-input { border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .settings-input:hover { border-color: #3d5a80; }
+        [data-theme="dark"] .settings-input:focus { border-color: #3b82f6; }
+        [data-theme="dark"] .settings-input:disabled:hover { border-color: #2a3a52; }
+        /* Legacy classes - redirect to new system */
+        .token-inline-input { width: 180px; flex-shrink: 0; text-align: right; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; padding: 6px 10px; font-family: 'SF Mono','Consolas',monospace; font-size: 13px; color: var(--text-primary); outline: none; transition: all 0.15s; }
+        .token-inline-input:hover { border-color: #b0b7c3; }
+        .token-inline-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        .settings-number-input { width: 54px; text-align: center; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; padding: 6px 10px; font-size: 13px; color: var(--text-primary); outline: none; transition: all 0.15s; -moz-appearance: textfield; }
+        .settings-number-input::-webkit-outer-spin-button, .settings-number-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .settings-number-input:hover { border-color: #b0b7c3; }
+        .settings-number-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
         .token-inline-input::placeholder { color: var(--text-muted); font-family: inherit; }
         .token-actions-row { display: flex; gap: 6px; justify-content: flex-end; }
         .token-action-btn { display: flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: #666; font-size: 12px; cursor: pointer; transition: all 0.15s; }
@@ -333,9 +364,12 @@
         [data-theme="dark"] .settings-row-label { color: #e2e8f0; }
         [data-theme="dark"] .settings-token-label { color: #e2e8f0; }
         [data-theme="dark"] .settings-token-section { border-top-color: #2a3a52; }
-        [data-theme="dark"] .token-inline-input { color: #e2e8f0; }
-        [data-theme="dark"] .token-inline-input:hover { border-color: #2a3a52; }
+        [data-theme="dark"] .token-inline-input { color: #e2e8f0; border-color: #2a3a52; }
+        [data-theme="dark"] .token-inline-input:hover { border-color: #3d5a80; }
         [data-theme="dark"] .token-inline-input:focus { border-color: #3b82f6; background: #1a2538; }
+        [data-theme="dark"] .settings-number-input { border-color: #2a3a52; }
+        [data-theme="dark"] .settings-number-input:hover { border-color: #3d5a80; }
+        [data-theme="dark"] .settings-number-input:focus { border-color: #3b82f6; background: #1a2538; }
         [data-theme="dark"] .token-action-btn { border-color: #2a3a52; color: #64748b; }
         [data-theme="dark"] .token-action-btn:hover { background: rgba(255,255,255,0.06); color: #94a3b8; border-color: #3a4f6e; }
         
@@ -354,11 +388,24 @@
         .threshold-content .threshold-table th.col-critical { color: #dc2626; }
         .threshold-content .threshold-table td { padding: 8px 8px; border-bottom: 1px solid #e5e7eb; }
         .threshold-content .threshold-table td:first-child { color: #374151; }
-        .threshold-content .threshold-input { display: flex; align-items: center; gap: 4px; }
-        .threshold-content .threshold-input select { width: 54px; padding: 5px 4px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; }
-        .threshold-content .threshold-input input { width: 60px; padding: 5px 6px; border: 1px solid #d1d5db; border-radius: 4px; background: #ffffff; color: #374151; font-size: 12px; text-align: center; }
-        .threshold-content .threshold-input input:disabled, .threshold-content .threshold-input select:disabled { opacity: 0.4; }
-        .threshold-content .threshold-input .unit { font-size: 11px; color: #9ca3af; }
+        .threshold-content .threshold-input { display: flex; align-items: center; gap: 6px; }
+        .threshold-content .threshold-input .custom-select { min-width: 58px; }
+        .threshold-content .threshold-input .custom-select-trigger { padding: 6px 8px; font-size: 13px; border: 1px solid #d5d9e0; background: transparent; justify-content: center; gap: 4px; }
+        .threshold-content .threshold-input .custom-select-trigger:hover { border-color: #b0b7c3; }
+        .threshold-content .threshold-input .custom-select.open .custom-select-trigger { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        .threshold-content .threshold-input .custom-select-trigger .custom-select-arrow { width: 10px; height: 10px; }
+        .threshold-content .threshold-input .custom-select-options { min-width: 60px; }
+        .threshold-content .threshold-input .custom-select-option { padding: 6px 10px; font-size: 13px; justify-content: center; }
+        .threshold-content .threshold-input .custom-select-option::before { display: none; }
+        .threshold-content .threshold-input .custom-select.disabled { pointer-events: none; }
+        .threshold-content .threshold-input .custom-select.disabled .custom-select-trigger { opacity: 0.4; cursor: not-allowed; }
+        .threshold-content .threshold-input input { width: 64px; padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background-color: transparent; color: var(--text-primary); font-size: 13px; text-align: center; outline: none; transition: all 0.15s; -moz-appearance: textfield; }
+        .threshold-content .threshold-input input::-webkit-outer-spin-button, .threshold-content .threshold-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        .threshold-content .threshold-input input:hover { border-color: #b0b7c3; }
+        .threshold-content .threshold-input input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        .threshold-content .threshold-input input:disabled { opacity: 0.4; cursor: not-allowed; }
+        .threshold-content .threshold-input input:disabled:hover { border-color: #d5d9e0; }
+        .threshold-content .threshold-input .unit { font-size: 12px; color: #9ca3af; }
         [data-theme="dark"] .threshold-content .preset-btn { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
         [data-theme="dark"] .threshold-content .preset-btn:hover { border-color: #4a5568; }
         [data-theme="dark"] .threshold-content .preset-btn.active { background: rgba(59,130,246,0.15); border-color: #3b82f6; }
@@ -368,7 +415,13 @@
         [data-theme="dark"] .threshold-content .threshold-table th.col-warning { color: #fbbf24; }
         [data-theme="dark"] .threshold-content .threshold-table th.col-critical { color: #f87171; }
         [data-theme="dark"] .threshold-content .threshold-table td { color: #e2e8f0; border-color: #2a3a52; }
-        [data-theme="dark"] .threshold-content .threshold-input select, [data-theme="dark"] .threshold-content .threshold-input input { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .threshold-content .threshold-input .custom-select-trigger { border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-content .threshold-input .custom-select-trigger:hover { border-color: #3d5a80; }
+        [data-theme="dark"] .threshold-content .threshold-input input { background-color: transparent; border-color: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .threshold-content .threshold-input input:hover { border-color: #3d5a80; }
+        [data-theme="dark"] .threshold-content .threshold-input input:focus { border-color: #3b82f6; }
+        [data-theme="dark"] .threshold-content .threshold-input input:disabled:hover { border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-content .threshold-input .unit { color: #64748b; }
         
         @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
     </style>
@@ -431,7 +484,7 @@
                         </div>
                     </div>
                     <input type="hidden" id="typeFilter" value="">
-                    <input type="text" id="search" placeholder="Search..." onkeyup="applyFilters()">
+                    <input type="text" id="search" class="search-input" placeholder="Search..." onkeyup="applyFilters()">
                 </div>
             </div>
             <div class="filter-separator"></div>
@@ -502,6 +555,10 @@
                         <span class="add-host-at">@</span>
                     </span>
                     <input type="text" id="addHostInput" class="add-host-input" placeholder="IP or hostname" onkeydown="handleAddHostKey(event)">
+                    <span id="addHostPortField">
+                        <span class="add-host-at">:</span>
+                        <input type="text" id="addHostPort" class="add-host-input add-host-port" placeholder="22" title="SSH port (default: 22)">
+                    </span>
                     <button class="add-host-confirm" onclick="addHostFromInput()">✓</button>
                     <button class="add-host-cancel" onclick="hideAddHostInput()">✕</button>
                     <input type="hidden" id="addHostMethod" value="ssh">
@@ -584,10 +641,10 @@
                     <div class="settings-row">
                         <span class="settings-row-label">Rate limit <span class="info-icon" data-tip="Limit push requests per IP address. Set to 0 to disable rate limiting.">ⓘ</span></span>
                         <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="number" id="rateLimitMax" class="rate-limit-input" value="10" min="0" max="1000" style="width: 60px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; text-align: center;" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
-                            <span style="font-size: 12px; color: var(--text-muted);">per</span>
-                            <input type="number" id="rateLimitWindow" class="rate-limit-input" value="60" min="1" max="3600" style="width: 60px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; text-align: center;" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
-                            <span style="font-size: 12px; color: var(--text-muted);">sec</span>
+                            <input type="number" id="rateLimitMax" class="settings-number-input" value="10" min="0" max="1000" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                            <span style="font-size: 13px; color: var(--text-muted);">per</span>
+                            <input type="number" id="rateLimitWindow" class="settings-number-input" value="60" min="1" max="3600" onblur="saveRateLimit()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                            <span style="font-size: 13px; color: var(--text-muted);">sec</span>
                         </div>
                     </div>
                     
@@ -1177,14 +1234,21 @@
         const pushAttempts = data.push_attempts || {};
         
         // Build map of IP -> full config entry
-        // Format: "ssh:user@host" or "push:host"
+        // Format: "ssh:user@host" or "ssh:user@host:port" or "push:host"
         const hostConfigMap = {};
         (settingsData?.hosts || []).forEach(h => {
             let method = 'ssh', rest = h;
             if (h.startsWith('push:')) { method = 'push'; rest = h.slice(5); }
             else if (h.startsWith('ssh:')) { method = 'ssh'; rest = h.slice(4); }
-            const ip = rest.includes('@') ? rest.split('@')[1] : rest;
-            hostConfigMap[ip] = { full: h, method, rest, ip };
+            let ip = rest.includes('@') ? rest.split('@')[1] : rest;
+            // Extract port if present (format: host:port)
+            let port = '';
+            if (method === 'ssh' && ip.includes(':')) {
+                const parts = ip.split(':');
+                ip = parts[0];
+                port = parts[1];
+            }
+            hostConfigMap[ip] = { full: h, method, rest, ip, port };
         });
         
         // Helper to get user for a host
@@ -1200,6 +1264,12 @@
             return entry ? entry.method : 'ssh';
         };
         
+        // Helper to get port for a host
+        const getHostPort = (host) => {
+            const entry = hostConfigMap[host];
+            return entry?.port || '';
+        };
+        
         // Render hosts (all configured hosts, even those without disks)
         let html = '';
         for (const host of data.hosts) {
@@ -1208,6 +1278,7 @@
             const hasDisks = disks.length > 0;
             const hostUser = getHostUser(host);
             const hostMethod = getHostMethod(host);
+            const hostPort = getHostPort(host);
             const fullHostEntry = hostConfigMap[host]?.full || host;
             
             // User display (small text if != root)
@@ -1228,6 +1299,10 @@
                     <span class="host-edit-at">@</span>
                 </span>
                 <input type="text" class="host-edit-input host-edit-ip" value="${host}">
+                <span class="host-edit-ssh-fields" id="hostEditPort-${host.replace(/\\./g, '-')}" style="${hostMethod === 'push' ? 'display:none' : ''}">
+                    <span class="host-edit-at">:</span>
+                    <input type="text" class="host-edit-input host-edit-port" value="${hostPort}" placeholder="22">
+                </span>
                 <input type="hidden" class="host-edit-method-val" value="${hostMethod}">
                 <button class="host-edit-confirm" onclick="event.stopPropagation();saveHostEdit('${host}')">✓</button>
                 <button class="host-edit-cancel" onclick="event.stopPropagation();hideHostEdit('${host}')">✕</button>
@@ -1743,7 +1818,7 @@
             const result = await res.json();
             if (result.success) {
                 // Visual feedback
-                const inputs = document.querySelectorAll('.rate-limit-input');
+                const inputs = document.querySelectorAll('.settings-number-input');
                 inputs.forEach(inp => {
                     inp.style.borderColor = 'var(--success)';
                     setTimeout(() => inp.style.borderColor = '', 1500);
@@ -2043,6 +2118,7 @@
         const newMethod = form.querySelector('.host-edit-method-val').value;
         const newUser = form.querySelector('.host-edit-user').value.trim();
         const newIp = form.querySelector('.host-edit-ip').value.trim();
+        const newPort = form.querySelector('.host-edit-port')?.value.trim() || '';
         
         if (!newIp) {
             hideHostEdit(oldIp);
@@ -2055,7 +2131,9 @@
             let rest = h;
             if (h.startsWith('push:')) rest = h.slice(5);
             else if (h.startsWith('ssh:')) rest = h.slice(4);
-            const ip = rest.includes('@') ? rest.split('@')[1] : rest;
+            let ip = rest.includes('@') ? rest.split('@')[1] : rest;
+            // Strip port for comparison
+            ip = ip.split(':')[0];
             return ip === oldIp;
         });
         if (idx === -1) return;
@@ -2067,6 +2145,9 @@
         } else {
             if (!newUser) { form.querySelector('.host-edit-user').focus(); return; }
             newEntry = `ssh:${newUser}@${newIp}`;
+            if (newPort && newPort !== '22') {
+                newEntry += `:${newPort}`;
+            }
         }
         
         if (newEntry === hosts[idx]) {
@@ -2153,6 +2234,7 @@
         document.getElementById('addHostInline').style.display = 'flex';
         setAddMethod('ssh');
         document.getElementById('addHostUser').value = '';
+        document.getElementById('addHostPort').value = '';
         const input = document.getElementById('addHostInput');
         input.value = '';
         input.focus();
@@ -2163,11 +2245,14 @@
         document.getElementById('addHostInline').style.display = 'none';
         document.getElementById('addHostUser').value = '';
         document.getElementById('addHostInput').value = '';
+        document.getElementById('addHostPort').value = '';
     }
     
     function toggleAddUserField(method) {
         const sshFields = document.getElementById('addHostSshFields');
+        const portField = document.getElementById('addHostPortField');
         sshFields.style.display = method === 'push' ? 'none' : '';
+        portField.style.display = method === 'push' ? 'none' : '';
     }
     
     function setAddMethod(method) {
@@ -2185,7 +2270,9 @@
         const btns = form.querySelectorAll('.method-toggle-btn');
         btns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === method));
         const sshFields = document.getElementById('hostEditSsh-' + id);
+        const portFields = document.getElementById('hostEditPort-' + id);
         if (sshFields) sshFields.style.display = method === 'push' ? 'none' : '';
+        if (portFields) portFields.style.display = method === 'push' ? 'none' : '';
     }
     
     function handleAddHostKey(event) {
@@ -2201,18 +2288,23 @@
         const methodSelect = document.getElementById('addHostMethod');
         const userInput = document.getElementById('addHostUser');
         const hostInput = document.getElementById('addHostInput');
+        const portInput = document.getElementById('addHostPort');
         const method = methodSelect.value;
         const user = userInput.value.trim();
         const ip = hostInput.value.trim();
+        const port = portInput.value.trim();
         if (!ip) return;
         
-        // Format: "push:host" or "ssh:user@host"
+        // Format: "push:host" or "ssh:user@host" or "ssh:user@host:port"
         let hostEntry;
         if (method === 'push') {
             hostEntry = `push:${ip}`;
         } else {
             if (!user) { userInput.focus(); return; }
             hostEntry = `ssh:${user}@${ip}`;
+            if (port && port !== '22') {
+                hostEntry += `:${port}`;
+            }
         }
         
         const hosts = [...(settingsData.hosts || [])];
@@ -2221,7 +2313,9 @@
             let rest = h;
             if (h.startsWith('push:')) rest = h.slice(5);
             else if (h.startsWith('ssh:')) rest = h.slice(4);
-            const existingHost = rest.includes('@') ? rest.split('@')[1] : rest;
+            // Extract just the IP/hostname (before any port)
+            const hostPart = rest.includes('@') ? rest.split('@')[1] : rest;
+            const existingHost = hostPart.split(':')[0];
             return existingHost === ip;
         });
         if (existingIp) { 
@@ -2387,60 +2481,103 @@
         const tbody = document.querySelector(`#${type}Thresholds tbody`);
         const attrs = THRESHOLD_ATTRS[type];
         
+        const opLabels = { '>': '>', '>=': '≥', '<': '<', '<=': '≤', '-': 'off' };
+        
         let html = '';
         for (const attr of attrs) {
             const warn = (thresholds.warning || {})[attr.key] || {};
             const crit = (thresholds.critical || {})[attr.key] || {};
             const defaultOp = attr.defaultOp || '>';
-            const disabled = editable ? '' : 'disabled';
+            const disabledClass = editable ? '' : 'disabled';
             
             const warnOp = warn.op || (warn.value !== undefined ? defaultOp : '-');
             const critOp = crit.op || (crit.value !== undefined ? defaultOp : '-');
+            
+            const warnSelectId = `thresholdOp-${type}-warning-${attr.key}`;
+            const critSelectId = `thresholdOp-${type}-critical-${attr.key}`;
+            
+            const buildOptions = (selectedOp) => {
+                return ['>', '>=', '<', '<=', '-'].map(op => 
+                    `<div class="custom-select-option${op === selectedOp ? ' selected' : ''}" data-value="${op}">${opLabels[op]}</div>`
+                ).join('');
+            };
             
             html += `<tr data-attr="${attr.key}">
                 <td>${attr.label}</td>
                 <td>
                     <div class="threshold-input">
-                        <select data-type="${type}" data-level="warning" data-attr="${attr.key}" data-field="op" onchange="onThresholdChange()" ${disabled}>
-                            <option value=">" ${warnOp === '>' ? 'selected' : ''}>&gt;</option>
-                            <option value=">=" ${warnOp === '>=' ? 'selected' : ''}>&ge;</option>
-                            <option value="<" ${warnOp === '<' ? 'selected' : ''}>&lt;</option>
-                            <option value="<=" ${warnOp === '<=' ? 'selected' : ''}>&le;</option>
-                            <option value="-" ${warnOp === '-' ? 'selected' : ''}>off</option>
-                        </select>
+                        <div class="custom-select ${disabledClass}" id="${warnSelectId}" data-type="${type}" data-level="warning" data-attr="${attr.key}" data-value="${warnOp}">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('${warnSelectId}')">
+                                <span class="custom-select-value">${opLabels[warnOp]}</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">${buildOptions(warnOp)}</div>
+                        </div>
                         <input type="number" min="0" value="${warn.value ?? ''}" 
                             data-type="${type}" data-level="warning" data-attr="${attr.key}" data-field="value"
-                            onchange="onThresholdChange()" ${disabled || warnOp === '-' ? 'disabled' : ''}>
+                            onchange="onThresholdChange()" ${!editable || warnOp === '-' ? 'disabled' : ''}>
                         ${attr.unit ? `<span class="unit">${attr.unit}</span>` : ''}
                     </div>
                 </td>
                 <td>
                     <div class="threshold-input">
-                        <select data-type="${type}" data-level="critical" data-attr="${attr.key}" data-field="op" onchange="onThresholdChange()" ${disabled}>
-                            <option value=">" ${critOp === '>' ? 'selected' : ''}>&gt;</option>
-                            <option value=">=" ${critOp === '>=' ? 'selected' : ''}>&ge;</option>
-                            <option value="<" ${critOp === '<' ? 'selected' : ''}>&lt;</option>
-                            <option value="<=" ${critOp === '<=' ? 'selected' : ''}>&le;</option>
-                            <option value="-" ${critOp === '-' ? 'selected' : ''}>off</option>
-                        </select>
+                        <div class="custom-select ${disabledClass}" id="${critSelectId}" data-type="${type}" data-level="critical" data-attr="${attr.key}" data-value="${critOp}">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('${critSelectId}')">
+                                <span class="custom-select-value">${opLabels[critOp]}</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">${buildOptions(critOp)}</div>
+                        </div>
                         <input type="number" min="0" value="${crit.value ?? ''}" 
                             data-type="${type}" data-level="critical" data-attr="${attr.key}" data-field="value"
-                            onchange="onThresholdChange()" ${disabled || critOp === '-' ? 'disabled' : ''}>
+                            onchange="onThresholdChange()" ${!editable || critOp === '-' ? 'disabled' : ''}>
                         ${attr.unit ? `<span class="unit">${attr.unit}</span>` : ''}
                     </div>
                 </td>
             </tr>`;
         }
         tbody.innerHTML = html;
+        
+        // Attach click handlers to threshold select options
+        tbody.querySelectorAll('.custom-select-option').forEach(opt => {
+            opt.addEventListener('click', function() {
+                const wrapper = this.closest('.custom-select');
+                if (wrapper.classList.contains('disabled')) return;
+                const value = this.dataset.value;
+                selectThresholdOp(wrapper.id, value);
+            });
+        });
+    }
+    
+    function selectThresholdOp(wrapperId, value) {
+        const wrapper = document.getElementById(wrapperId);
+        if (!wrapper || wrapper.classList.contains('disabled')) return;
+        
+        const opLabels = { '>': '>', '>=': '≥', '<': '<', '<=': '≤', '-': 'off' };
+        
+        // Update selected state
+        wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.value === value);
+        });
+        
+        // Update displayed value
+        wrapper.querySelector('.custom-select-value').textContent = opLabels[value];
+        wrapper.dataset.value = value;
+        
+        // Close dropdown
+        wrapper.classList.remove('open');
+        
+        // Enable/disable the adjacent input
+        const input = wrapper.parentElement.querySelector('input');
+        if (input) {
+            input.disabled = value === '-';
+        }
+        
+        // Trigger save
+        onThresholdChange();
     }
     
     function onThresholdChange() {
-        // Enable/disable value input based on op selection
-        document.querySelectorAll('.threshold-input select[data-field="op"]:not([disabled])').forEach(sel => {
-            const input = sel.parentElement.querySelector('input');
-            input.disabled = sel.value === '-';
-        });
-        
         // Save after short delay
         clearTimeout(window._thresholdSaveTimeout);
         window._thresholdSaveTimeout = setTimeout(saveCustomThresholds, 500);
@@ -2487,11 +2624,11 @@
         // Collect all threshold values from the form
         const thresholds = { ata: { warning: {}, critical: {} }, nvme: { warning: {}, critical: {} } };
         
-        document.querySelectorAll('.threshold-input select[data-field="op"]:not([disabled])').forEach(sel => {
+        document.querySelectorAll('.threshold-input .custom-select:not(.disabled)').forEach(sel => {
             const type = sel.dataset.type;
             const level = sel.dataset.level;
             const attr = sel.dataset.attr;
-            const op = sel.value;
+            const op = sel.dataset.value;
             
             if (op !== '-') {
                 const input = sel.parentElement.querySelector('input');

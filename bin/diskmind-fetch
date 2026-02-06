@@ -292,7 +292,7 @@ def get_local_script_path() -> str:
     return str(candidates[0])
 
 
-def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> dict:
+def collect_from_host(host: str, ssh_user: str, ssh_timeout: int, ssh_port: int = None) -> dict:
     """Collect SMART data from a single host via SSH (or locally for localhost).
     
     Returns dict with:
@@ -316,16 +316,24 @@ def collect_from_host(host: str, ssh_user: str, ssh_timeout: int) -> dict:
                 timeout=120
             )
         else:
+            # Build SSH command
+            ssh_cmd = [
+                'ssh',
+                '-o', 'BatchMode=yes',
+                '-o', f'ConnectTimeout={ssh_timeout}',
+                '-o', 'StrictHostKeyChecking=accept-new',
+            ]
+            # Add port if specified
+            if ssh_port:
+                ssh_cmd.extend(['-p', str(ssh_port)])
+            ssh_cmd.extend([
+                f'{ssh_user}@{host}',
+                'bash -s'
+            ])
+            
             # Execute script on remote host via SSH
             result = subprocess.run(
-                [
-                    'ssh',
-                    '-o', 'BatchMode=yes',
-                    '-o', f'ConnectTimeout={ssh_timeout}',
-                    '-o', 'StrictHostKeyChecking=accept-new',
-                    f'{ssh_user}@{host}',
-                    'bash -s'
-                ],
+                ssh_cmd,
                 input=script_content,
                 capture_output=True,
                 text=True,
@@ -435,10 +443,10 @@ def main():
     ssh_timeout = config.get('ssh', {}).get('timeout', 30)
     retention_days = config.get('database', {}).get('retention_days', 365)
     
-    # Parse hosts - support "method:user@host" format
+    # Parse hosts - support "method:user@host" or "method:user@host:port" format
     # push: hosts are skipped (they push data themselves)
     # ssh: or no prefix = collect via SSH
-    # User must always be specified: user@host
+    # User must always be specified: user@host or user@host:port
     raw_hosts = config.get('hosts', [])
     hosts = []
     for h in raw_hosts:
@@ -450,8 +458,17 @@ def main():
         if h.startswith('ssh:'):
             h = h[4:]
         if '@' in h:
-            user, ip = h.split('@', 1)
-            hosts.append({'ip': ip, 'user': user})
+            user, rest = h.split('@', 1)
+            # Check for port (format: host:port)
+            if ':' in rest:
+                ip, port = rest.rsplit(':', 1)
+                # Validate port is numeric
+                if port.isdigit():
+                    hosts.append({'ip': ip, 'user': user, 'port': int(port)})
+                else:
+                    hosts.append({'ip': rest, 'user': user, 'port': None})
+            else:
+                hosts.append({'ip': rest, 'user': user, 'port': None})
         else:
             print(f"  Warning: Skipping '{h}' — missing user. Use user@host format (e.g. root@{h})", file=sys.stderr)
     
@@ -473,9 +490,11 @@ def main():
     for host_info in hosts:
         host = host_info['ip']
         ssh_user = host_info['user']
-        print(f"  → {ssh_user}@{host}...", end=' ', flush=True)
+        ssh_port = host_info.get('port')
+        port_str = f":{ssh_port}" if ssh_port else ""
+        print(f"  → {ssh_user}@{host}{port_str}...", end=' ', flush=True)
         
-        result = collect_from_host(host, ssh_user, ssh_timeout)
+        result = collect_from_host(host, ssh_user, ssh_timeout, ssh_port)
         readings = result['readings']
         
         # Update host status in DB

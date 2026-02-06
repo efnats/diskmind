@@ -1126,7 +1126,8 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 if rate_limit is not None:
                     max_req = int(rate_limit.get('max_requests', 10))
                     window = int(rate_limit.get('window_seconds', 60))
-                    save_config_value('rate_limit', {'max_requests': max_req, 'window_seconds': window})
+                    save_config_subkey('rate_limit', 'max_requests', max_req)
+                    save_config_subkey('rate_limit', 'window_seconds', window)
                     result['rate_limit'] = {'max_requests': max_req, 'window_seconds': window}
                 
                 result['success'] = True

@@ -20,7 +20,7 @@ from pathlib import Path
 
 # Shared library
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
-from diskmind_core import VERSION, parse_simple_yaml
+from diskmind_core import VERSION, parse_simple_yaml, load_thresholds_from_dir, generate_alerts, send_notifications
 
 
 # ---------------------------------------------------------------------------
@@ -165,60 +165,40 @@ def init_database(db_path: str) -> sqlite3.Connection:
             disk_id TEXT PRIMARY KEY,
             first_seen DATETIME NOT NULL
         );
+        
+        CREATE TABLE IF NOT EXISTS disk_status (
+            disk_id TEXT PRIMARY KEY,
+            smart_status TEXT,
+            smart_attributes TEXT,
+            status TEXT NOT NULL DEFAULT 'ok',
+            updated_at DATETIME
+        );
+        
+        CREATE TABLE IF NOT EXISTS alerts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            disk_id TEXT NOT NULL,
+            host TEXT NOT NULL,
+            timestamp DATETIME NOT NULL,
+            alert_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            attribute TEXT,
+            old_value TEXT,
+            new_value TEXT,
+            message TEXT,
+            acknowledged INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_alerts_severity ON alerts(severity);
+        
+        CREATE TABLE IF NOT EXISTS notification_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            alert_id INTEGER,
+            timestamp DATETIME NOT NULL,
+            channel TEXT NOT NULL,
+            success INTEGER DEFAULT 0,
+            error TEXT
+        );
     ''')
-    
-    # Migrate from old schema (serial-based primary key)
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA table_info(readings)")
-    columns = [row[1] for row in cursor.fetchall()]
-    if 'disk_id' not in columns and 'serial' in columns:
-        print("  Migrating database to v1.1 schema (adding wwn, disk_id)...")
-        conn.executescript('''
-            ALTER TABLE readings RENAME TO readings_old;
-            CREATE TABLE readings (
-                disk_id TEXT NOT NULL,
-                wwn TEXT,
-                serial TEXT NOT NULL,
-                timestamp DATETIME NOT NULL,
-                host TEXT NOT NULL,
-                device TEXT NOT NULL,
-                type TEXT,
-                model TEXT,
-                capacity_bytes INTEGER,
-                smart_status TEXT,
-                smart_attributes TEXT,
-                PRIMARY KEY (disk_id, timestamp)
-            );
-            INSERT INTO readings (disk_id, wwn, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes)
-                SELECT serial, NULL, serial, timestamp, host, device, type, model, capacity_bytes, smart_status, smart_attributes
-                FROM readings_old;
-            DROP TABLE readings_old;
-            CREATE INDEX IF NOT EXISTS idx_readings_timestamp ON readings(timestamp);
-            CREATE INDEX IF NOT EXISTS idx_readings_host ON readings(host);
-            CREATE INDEX IF NOT EXISTS idx_readings_wwn ON readings(wwn);
-        ''')
-        print("  Migration complete.")
-    
-    # Migrate to v1.2 schema (add firmware, rpm, sector_size)
-    if 'firmware' not in columns and 'disk_id' in columns:
-        print("  Migrating database to v1.2 schema (adding firmware, rpm, sector_size)...")
-        for col, coltype in [('firmware', 'TEXT'), ('rpm', 'INTEGER'), ('sector_size', 'INTEGER')]:
-            try:
-                conn.execute(f'ALTER TABLE readings ADD COLUMN {col} {coltype}')
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-        conn.commit()
-        print("  Migration complete.")
-    
-    # Migrate push_attempts: add reason column
-    cursor.execute("PRAGMA table_info(push_attempts)")
-    pa_columns = [row[1] for row in cursor.fetchall()]
-    if pa_columns and 'reason' not in pa_columns:
-        try:
-            conn.execute("ALTER TABLE push_attempts ADD COLUMN reason TEXT DEFAULT 'unknown'")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass
     
     return conn
 
@@ -245,19 +225,18 @@ def load_config(config_path: str) -> dict:
 
 def get_local_script_path() -> str:
     """Get path to diskmind-scan."""
-    # Try multiple locations
     base_dir = Path(__file__).parent.parent
     candidates = [
-        base_dir / 'lib' / 'diskmind-scan',
-        base_dir / 'diskmind-scan',
-        Path(__file__).parent / 'diskmind-scan',
+        Path(__file__).parent / 'diskmind-scan',   # bin/diskmind-scan (same dir)
+        base_dir / 'bin' / 'diskmind-scan',         # explicit bin/
+        base_dir / 'diskmind-scan',                  # project root
     ]
     
     for path in candidates:
         if path.exists():
             return str(path)
     
-    # Fallback
+    # Fallback: expected location
     return str(candidates[0])
 
 
@@ -454,6 +433,7 @@ def main():
     # Collect from all hosts
     total_disks = 0
     successful_hosts = 0
+    all_readings = []
     
     print("Collecting data:")
     for host_info in hosts:
@@ -471,12 +451,24 @@ def main():
         
         if result['status'] == 'ok':
             store_readings(conn, readings, timestamp)
+            all_readings.extend(readings)
             total_disks += len(readings)
             successful_hosts += 1
             print(f"✓ {len(readings)} disks")
         else:
             msg = result['message'] or result['status']
             print(f"✗ {msg}")
+    
+    # Generate alerts and send notifications
+    if all_readings:
+        config_dir = Path(__file__).resolve().parent.parent / 'config'
+        thresholds = load_thresholds_from_dir(config_dir)
+        new_alerts = generate_alerts(conn, all_readings, thresholds, timestamp)
+        if new_alerts:
+            notify_config = config.get('notifications', {})
+            send_notifications(conn, new_alerts, notify_config,
+                               config.get('webhook_urls', []))
+            print(f"  Alerts: {len(new_alerts)} generated")
     
     print()
     print(f"Collected: {total_disks} disks from {successful_hosts}/{len(hosts)} hosts")

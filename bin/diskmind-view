@@ -24,14 +24,10 @@ from urllib.parse import urlparse, parse_qs
 
 # Shared library
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
-from diskmind_core import VERSION, parse_simple_yaml
-
-# Optional: yaml for config
-try:
-    import yaml
-    HAS_YAML = True
-except ImportError:
-    HAS_YAML = False
+from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
+                          get_disk_issues, check_threshold, decode_seagate_value,
+                          generate_alerts, send_notifications, _send_webhook,
+                          CUMULATIVE_EVENT_ATTRS, CRITICAL_STATE_ATTRS)
 
 from collections import defaultdict
 
@@ -111,12 +107,12 @@ def get_current_readings(db_path: str) -> list[dict]:
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     
-    # Get latest reading per disk_id
+    # Get latest reading per disk_id (window function, requires SQLite ≥ 3.25)
     cursor.execute('''
-        SELECT * FROM readings
-        WHERE (disk_id, timestamp) IN (
-            SELECT disk_id, MAX(timestamp) FROM readings GROUP BY disk_id
-        )
+        SELECT * FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY disk_id ORDER BY timestamp DESC) AS rn
+            FROM readings
+        ) WHERE rn = 1
         ORDER BY host, device
     ''')
     
@@ -300,19 +296,13 @@ def get_push_attempts(db_path: str) -> dict:
     if not cursor.fetchone():
         conn.close()
         return {}
-    # Check if reason column exists
-    cursor.execute("PRAGMA table_info(push_attempts)")
-    cols = [row[1] for row in cursor.fetchall()]
-    if 'reason' in cols:
-        cursor.execute('SELECT host, last_attempt, attempts, reason FROM push_attempts')
-    else:
-        cursor.execute('SELECT host, last_attempt, attempts FROM push_attempts')
+    cursor.execute('SELECT host, last_attempt, attempts, reason FROM push_attempts')
     result = {}
     for row in cursor.fetchall():
         result[row['host']] = {
             'last_attempt': row['last_attempt'],
             'attempts': row['attempts'],
-            'reason': row['reason'] if 'reason' in cols else 'unknown',
+            'reason': row['reason'],
         }
     conn.close()
     return result
@@ -340,7 +330,7 @@ def get_host_stats(db_path: str) -> dict:
 
 
 def get_stats(readings: list[dict]) -> dict:
-    """Calculate summary statistics."""
+    """Calculate summary statistics. Expects r['status'] to be set on each reading."""
     total = len(readings)
     critical = 0
     warning = 0
@@ -350,7 +340,7 @@ def get_stats(readings: list[dict]) -> dict:
     for r in readings:
         total_capacity += r.get('capacity_bytes') or 0
         
-        status = classify_disk(r)
+        status = r.get('status', 'ok')
         if status == 'critical':
             critical += 1
         elif status == 'warning':
@@ -394,16 +384,23 @@ def _get_config_path() -> Path:
     return base_dir / 'config' / 'config.yaml'
 
 
+_config_cache = None
+_config_mtime = 0
+
 def load_config() -> dict:
-    """Load user config from config/config.yaml."""
+    """Load user config from config/config.yaml (cached, re-reads on file change)."""
+    global _config_cache, _config_mtime
     config_path = _get_config_path()
-    if config_path.exists():
-        try:
-            with open(config_path) as f:
-                return parse_simple_yaml(f.read())
-        except IOError:
-            pass
-    return {}
+    try:
+        mtime = config_path.stat().st_mtime
+        if _config_cache is not None and mtime == _config_mtime:
+            return _config_cache
+        with open(config_path) as f:
+            _config_cache = parse_simple_yaml(f.read())
+        _config_mtime = mtime
+        return _config_cache
+    except (OSError, IOError):
+        return {}
 
 
 def save_config_value(key: str, value):
@@ -618,186 +615,7 @@ def get_fetch_module():
     return _fetch_module
 
 
-def check_threshold(attr_value, rule: dict) -> bool:
-    """Check if an attribute value exceeds a threshold rule."""
-    try:
-        val = float(attr_value)
-    except (ValueError, TypeError):
-        return False
-    
-    op = rule.get('op', '>')
-    threshold = rule.get('value', 0)
-    
-    if op == '>':
-        return val > threshold
-    elif op == '>=':
-        return val >= threshold
-    elif op == '<':
-        return val < threshold
-    elif op == '<=':
-        return val <= threshold
-    elif op == '==':
-        return val == threshold
-    return False
 
-
-def classify_disk(r: dict, history: dict = None, delta_days: float = None) -> str:
-    """Classify disk status based on visible issues (respecting delta filter)."""
-    issues = get_disk_issues(r, history, delta_days)
-    
-    # Status is determined by the filtered issues
-    for issue in issues:
-        if issue['level'] == 'critical':
-            return 'critical'
-    for issue in issues:
-        if issue['level'] == 'warning':
-            return 'warning'
-    
-    return 'ok'
-
-
-# Cumulative event counters - only show if delta > 0 in selected time range
-# These are counters that accumulate over time; old values aren't necessarily concerning
-CUMULATIVE_EVENT_ATTRS = {
-    'Command_Timeout',
-    'Reported_Uncorrect',
-    'UDMA_CRC_Error_Count',
-    'Unsafe_Shutdowns',
-    'Error_Information_Log_Entries',
-    'Power_Off_Retract_Count',
-}
-
-# Critical state attributes - always show regardless of delta
-# These represent current state or irreversible damage
-CRITICAL_STATE_ATTRS = {
-    'Reallocated_Sector_Ct',
-    'Current_Pending_Sector',
-    'Offline_Uncorrectable',
-    'Media_and_Data_Integrity_Errors',
-    'Critical_Warning',
-    'Percentage_Used',
-    'Available_Spare',
-    'Temperature_Celsius',
-    'Airflow_Temperature_Cel',
-    'Temperature',
-}
-
-
-def decode_seagate_value(attr_name: str, raw_value) -> int:
-    """Decode Seagate composite 48-bit raw values.
-    
-    Seagate packs multiple counters into raw values:
-    - Command_Timeout (#188): low 16 bits = actual timeout count
-    - Raw_Read_Error_Rate (#1): high 16 bits = error count
-    - Seek_Error_Rate (#7): high 16 bits = error count
-    """
-    try:
-        raw = int(raw_value)
-    except (ValueError, TypeError):
-        return 0
-    
-    if raw <= 65535:  # Not a composite value
-        return raw
-    
-    if attr_name == 'Command_Timeout':
-        return raw & 0xFFFF
-    elif attr_name in ('Raw_Read_Error_Rate', 'Seek_Error_Rate'):
-        return (raw >> 32) & 0xFFFF
-    
-    return raw
-
-
-def get_disk_issues(r: dict, history: dict = None, delta_days: float = None) -> list[dict]:
-    """Get list of threshold violations for a disk, filtered by delta time range.
-    
-    Args:
-        r: Disk reading dict
-        history: History data for this disk (with deltas)
-        delta_days: Time range in days (None or >= 36500 means all time)
-    
-    Returns:
-        List of issues that should be shown based on:
-        - Critical state attrs: always shown if threshold exceeded
-        - Cumulative counters: only shown if delta > 0 in time range
-    """
-    attrs = r.get('smart_attributes', {})
-    if isinstance(attrs, str):
-        try:
-            attrs = json.loads(attrs)
-        except:
-            attrs = {}
-    
-    thresholds = get_thresholds()
-    disk_type = (r.get('type') or '').strip()
-    is_nvme = disk_type == 'NVMe'
-    
-    if is_nvme:
-        rules = thresholds.get('nvme', {})
-    else:
-        rules = thresholds.get('ata', {})
-    
-    issues = []
-    all_time = delta_days is None or delta_days >= 36500
-    
-    # SMART self-test failure is always critical
-    if r.get('smart_status') not in ('PASSED', 'N/A', None):
-        issues.append({'level': 'critical', 'text': 'SMART Failed'})
-    
-    def should_show_attr(attr_name: str) -> bool:
-        """Determine if an attribute's issue should be shown based on delta filter."""
-        # All time mode - show everything
-        if all_time:
-            return True
-        
-        # Critical state attrs always shown
-        if attr_name in CRITICAL_STATE_ATTRS:
-            return True
-        
-        # Cumulative counters - only show if delta > 0
-        if attr_name in CUMULATIVE_EVENT_ATTRS:
-            if history and attr_name in history:
-                attr_hist = history[attr_name]
-                delta = attr_hist.get('delta', 0) if isinstance(attr_hist, dict) else 0
-                return delta > 0
-            # No history data - don't show (can't prove it's new)
-            return False
-        
-        # Unknown attr type - show to be safe
-        return True
-    
-    # Check critical thresholds
-    for attr_name, rule in rules.get('critical', {}).items():
-        if attr_name.startswith('_'):
-            continue
-        val = attrs.get(attr_name)
-        if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
-            if check_threshold(check_val, rule):
-                if should_show_attr(attr_name):
-                    display = rule.get('display', attr_name)
-                    issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
-    
-    # Check warning thresholds (skip if already critical for same attribute)
-    critical_attrs = set(rules.get('critical', {}).keys())
-    for attr_name, rule in rules.get('warning', {}).items():
-        if attr_name.startswith('_'):
-            continue
-        # Skip if already flagged as critical
-        if attr_name in critical_attrs:
-            val = attrs.get(attr_name)
-            if val is not None:
-                check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
-                if check_threshold(check_val, rules['critical'][attr_name]):
-                    continue
-        val = attrs.get(attr_name)
-        if val is not None:
-            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
-            if check_threshold(check_val, rule):
-                if should_show_attr(attr_name):
-                    display = rule.get('display', attr_name)
-                    issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
-    
-    return issues
 
 
 # ---------------------------------------------------------------------------
@@ -894,6 +712,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 history_data = get_disk_history(self.db_path, days=delta_days if delta_days < 36500 else 365)
                 
                 # Classify and parse smart_attributes
+                thresholds = get_thresholds()
                 for r in readings:
                     # Parse JSON string to dict first (needed by classify_disk)
                     if r.get('smart_attributes'):
@@ -908,8 +727,8 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     disk_id = r.get('disk_id') or r.get('serial')
                     disk_history = history_data.get(disk_id, {})
                     
-                    r['status'] = classify_disk(r, disk_history, delta_days)
-                    r['issues'] = get_disk_issues(r, disk_history, delta_days)
+                    r['status'] = classify_disk(r, thresholds, disk_history, delta_days)
+                    r['issues'] = get_disk_issues(r, thresholds, disk_history, delta_days)
                 
                 # Recalculate stats based on new status values
                 stats = get_stats(readings)
@@ -937,7 +756,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'push_attempts': get_push_attempts(self.db_path),
                     'stats': stats,
                     'trends': trends,
-                    'thresholds': get_thresholds(),
+                    'thresholds': thresholds,
                 })
             
             elif path == '/api/hosts':
@@ -946,8 +765,47 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
             
             elif path == '/api/stats':
                 readings = get_current_readings(self.db_path)
+                thresholds = get_thresholds()
+                for r in readings:
+                    if r.get('smart_attributes'):
+                        try:
+                            r['smart_attributes'] = json.loads(r['smart_attributes'])
+                        except Exception:
+                            r['smart_attributes'] = {}
+                    r['status'] = classify_disk(r, thresholds)
                 stats = get_stats(readings)
                 self.send_json(stats)
+            
+            elif path == '/api/alerts':
+                params = parse_qs(parsed.query)
+                limit = int(params.get('limit', ['100'])[0])
+                conn = get_db_connection(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, disk_id, host, timestamp, alert_type, severity,
+                           attribute, old_value, new_value, message, acknowledged
+                    FROM alerts ORDER BY timestamp DESC LIMIT ?
+                ''', (limit,))
+                alerts = []
+                for row in cursor.fetchall():
+                    alerts.append({
+                        'id': row['id'],
+                        'disk_id': row['disk_id'],
+                        'host': row['host'],
+                        'timestamp': row['timestamp'],
+                        'alert_type': row['alert_type'],
+                        'severity': row['severity'],
+                        'attribute': row['attribute'],
+                        'old_value': row['old_value'],
+                        'new_value': row['new_value'],
+                        'message': row['message'],
+                        'acknowledged': bool(row['acknowledged']),
+                    })
+                # Count unacknowledged
+                cursor.execute('SELECT COUNT(*) FROM alerts WHERE acknowledged = 0')
+                unread = cursor.fetchone()[0]
+                conn.close()
+                self.send_json({'alerts': alerts, 'unread': unread})
             
             elif path == '/api/settings':
                 config = load_config()
@@ -975,6 +833,8 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'push_token_set': bool(config.get('push_token')),
                     'retention_days': config.get('database', {}).get('retention_days', 365),
                     'rate_limit': config.get('rate_limit', {'max_requests': 10, 'window_seconds': 60}),
+                    'notifications': config.get('notifications', {}),
+                    'webhook_urls': config.get('webhook_urls', []),
                 })
 
             elif path == '/api/history':
@@ -1080,8 +940,55 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     save_config_subkey('rate_limit', 'window_seconds', window)
                     result['rate_limit'] = {'max_requests': max_req, 'window_seconds': window}
                 
+                # Handle notifications change
+                notifications = data.get('notifications')
+                if notifications is not None:
+                    for nkey in ('min_severity', 'cooldown_minutes',
+                                 'include_recovery'):
+                        if nkey in notifications:
+                            val = notifications[nkey]
+                            # Convert booleans to yaml-friendly strings
+                            if isinstance(val, bool):
+                                val = 'true' if val else 'false'
+                            save_config_subkey('notifications', nkey, val if val else '')
+                    result['notifications'] = notifications
+                
+                # Handle webhook_urls change (top-level list)
+                webhook_urls = data.get('webhook_urls')
+                if webhook_urls is not None:
+                    urls = [u.strip() for u in webhook_urls if u.strip()]
+                    save_config_list('webhook_urls', urls)
+                    result['webhook_urls'] = urls
+                
                 result['success'] = True
                 self.send_json(result)
+            
+            elif path == '/api/test-webhook':
+                try:
+                    req = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                url = req.get('url', '').strip()
+                if not url:
+                    self.send_json({'error': 'No URL provided'}, 400)
+                    return
+                payload = {
+                    'title': '🔔 diskmind test',
+                    'message': 'This is a test notification from diskmind.',
+                    'severity': 'info',
+                    'alert_type': 'test',
+                    'disk_id': '',
+                    'host': '',
+                    'attribute': '',
+                    'old_value': '',
+                    'new_value': '',
+                }
+                success, error = _send_webhook(url, payload)
+                if success:
+                    self.send_json({'success': True})
+                else:
+                    self.send_json({'success': False, 'error': error or 'Webhook request failed'})
             
             elif path == '/api/collect':
                 # Trigger data collection
@@ -1214,6 +1121,15 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     # Clear any prior push attempts for this host
                     conn.execute('DELETE FROM push_attempts WHERE host = ?', (host,))
                     conn.commit()
+                    
+                    # Check for status changes and send notifications
+                    thresholds = get_thresholds()
+                    new_alerts = generate_alerts(conn, readings, thresholds, timestamp)
+                    if new_alerts:
+                        notify_config = config.get('notifications', {})
+                        send_notifications(conn, new_alerts, notify_config,
+                                           config.get('webhook_urls', []))
+                    
                     conn.close()
                     
                     self.send_json({
@@ -1225,6 +1141,27 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     
                 except Exception as e:
                     self.send_json({'error': f'Failed to process data: {str(e)}'}, 500)
+            
+            elif path == '/api/alerts/acknowledge':
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                
+                alert_ids = data.get('ids', [])
+                ack_all = data.get('all', False)
+                
+                conn = get_db_connection(self.db_path)
+                if ack_all:
+                    conn.execute('UPDATE alerts SET acknowledged = 1 WHERE acknowledged = 0')
+                elif alert_ids:
+                    placeholders = ','.join('?' * len(alert_ids))
+                    conn.execute(f'UPDATE alerts SET acknowledged = 1 WHERE id IN ({placeholders})',
+                                 alert_ids)
+                conn.commit()
+                conn.close()
+                self.send_json({'success': True})
             
             elif path == '/api/push-approve':
                 try:
@@ -1278,16 +1215,13 @@ def main():
     parser.add_argument('-p', '--port', type=int, default=8080, help='Port (default: 8080)')
     parser.add_argument('--host', default='0.0.0.0', help='Host (default: 0.0.0.0)')
     parser.add_argument('--db', default='./data/smart.db', help='Database path')
-    parser.add_argument('-c', '--config', default='config/config.yaml', help='Config file')
     parser.add_argument('--dev', action='store_true', help='Dev mode: reload HTML template on every request')
     
     args = parser.parse_args()
     
-    # Load config
-    if HAS_YAML and os.path.exists(args.config):
-        with open(args.config) as f:
-            config = yaml.safe_load(f)
-        args.db = config.get('database', {}).get('path', args.db)
+    # Load config (uses parse_simple_yaml from diskmind_core)
+    config = load_config()
+    args.db = config.get('database', {}).get('path', args.db)
     
     # Initialize database (create if missing)
     if not os.path.exists(args.db):

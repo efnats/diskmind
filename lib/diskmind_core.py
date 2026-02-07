@@ -1,10 +1,704 @@
 """
 diskmind-core — Shared library for diskmind components.
 
-Provides common utilities used by both diskmind-fetch and diskmind-view.
+Provides common utilities used by both diskmind-fetch and diskmind-view:
+- Config parsing
+- SMART attribute classification (thresholds, delta logic)
+- Seagate composite value decoding
 """
 
+import json
+
 VERSION = '1.5'
+
+
+# ---------------------------------------------------------------------------
+# SMART Attribute Constants
+# ---------------------------------------------------------------------------
+
+# Cumulative event counters - only show if delta > 0 in selected time range
+# These are counters that accumulate over time; old values aren't necessarily concerning
+CUMULATIVE_EVENT_ATTRS = {
+    'Command_Timeout',
+    'Reported_Uncorrect',
+    'UDMA_CRC_Error_Count',
+    'Unsafe_Shutdowns',
+    'Error_Information_Log_Entries',
+    'Power_Off_Retract_Count',
+}
+
+# Critical state attributes - always show regardless of delta
+# These represent current state or irreversible damage
+CRITICAL_STATE_ATTRS = {
+    'Reallocated_Sector_Ct',
+    'Current_Pending_Sector',
+    'Offline_Uncorrectable',
+    'Media_and_Data_Integrity_Errors',
+    'Critical_Warning',
+    'Percentage_Used',
+    'Available_Spare',
+    'Temperature_Celsius',
+    'Airflow_Temperature_Cel',
+    'Temperature',
+}
+
+# Temperature attributes — require minimum delta to trigger alerts
+# Small fluctuations (1-2°C) are normal and shouldn't generate noise
+TEMPERATURE_ATTRS = {'Temperature_Celsius', 'Airflow_Temperature_Cel', 'Temperature'}
+TEMPERATURE_MIN_DELTA = 3
+
+
+# ---------------------------------------------------------------------------
+# Seagate Decoding
+# ---------------------------------------------------------------------------
+
+def decode_seagate_value(attr_name: str, raw_value) -> int:
+    """Decode Seagate composite 48-bit raw values.
+
+    Seagate packs multiple counters into raw values:
+    - Command_Timeout (#188): low 16 bits = actual timeout count
+    - Raw_Read_Error_Rate (#1): high 16 bits = error count
+    - Seek_Error_Rate (#7): high 16 bits = error count
+    """
+    try:
+        raw = int(raw_value)
+    except (ValueError, TypeError):
+        return 0
+
+    if raw <= 65535:  # Not a composite value
+        return raw
+
+    if attr_name == 'Command_Timeout':
+        return raw & 0xFFFF
+    elif attr_name in ('Raw_Read_Error_Rate', 'Seek_Error_Rate'):
+        return (raw >> 32) & 0xFFFF
+
+    return raw
+
+
+# ---------------------------------------------------------------------------
+# Threshold Checking & Disk Classification
+# ---------------------------------------------------------------------------
+
+def check_threshold(attr_value, rule: dict) -> bool:
+    """Check if an attribute value exceeds a threshold rule."""
+    try:
+        val = float(attr_value)
+    except (ValueError, TypeError):
+        return False
+
+    op = rule.get('op', '>')
+    threshold = rule.get('value', 0)
+
+    if op == '>':
+        return val > threshold
+    elif op == '>=':
+        return val >= threshold
+    elif op == '<':
+        return val < threshold
+    elif op == '<=':
+        return val <= threshold
+    elif op == '==':
+        return val == threshold
+    return False
+
+
+def get_disk_issues(r: dict, thresholds: dict, history: dict = None,
+                    delta_days: float = None) -> list[dict]:
+    """Get list of threshold violations for a disk, filtered by delta time range.
+
+    Args:
+        r: Disk reading dict
+        thresholds: Threshold rules dict with 'ata' and 'nvme' keys
+        history: History data for this disk (with deltas)
+        delta_days: Time range in days (None or >= 36500 means all time)
+
+    Returns:
+        List of issues that should be shown based on:
+        - Critical state attrs: always shown if threshold exceeded
+        - Cumulative counters: only shown if delta > 0 in time range
+    """
+    attrs = r.get('smart_attributes', {})
+    if isinstance(attrs, str):
+        try:
+            attrs = json.loads(attrs)
+        except Exception:
+            attrs = {}
+
+    disk_type = (r.get('type') or '').strip()
+    is_nvme = disk_type == 'NVMe'
+
+    if is_nvme:
+        rules = thresholds.get('nvme', {})
+    else:
+        rules = thresholds.get('ata', {})
+
+    issues = []
+    all_time = delta_days is None or delta_days >= 36500
+
+    # SMART self-test failure is always critical
+    if r.get('smart_status') not in ('PASSED', 'N/A', None):
+        issues.append({'level': 'critical', 'text': 'SMART Failed'})
+
+    def should_show_attr(attr_name: str) -> bool:
+        """Determine if an attribute's issue should be shown based on delta filter."""
+        if all_time:
+            return True
+        if attr_name in CRITICAL_STATE_ATTRS:
+            return True
+        if attr_name in CUMULATIVE_EVENT_ATTRS:
+            if history and attr_name in history:
+                attr_hist = history[attr_name]
+                delta = attr_hist.get('delta', 0) if isinstance(attr_hist, dict) else 0
+                return delta > 0
+            return False
+        return True
+
+    # Check critical thresholds
+    for attr_name, rule in rules.get('critical', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        val = attrs.get(attr_name)
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
+            if check_threshold(check_val, rule):
+                if should_show_attr(attr_name):
+                    display = rule.get('display', attr_name)
+                    issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
+
+    # Check warning thresholds (skip if already critical for same attribute)
+    critical_attrs = set(rules.get('critical', {}).keys())
+    for attr_name, rule in rules.get('warning', {}).items():
+        if attr_name.startswith('_'):
+            continue
+        if attr_name in critical_attrs:
+            val = attrs.get(attr_name)
+            if val is not None:
+                check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
+                if check_threshold(check_val, rules['critical'][attr_name]):
+                    continue
+        val = attrs.get(attr_name)
+        if val is not None:
+            check_val = decode_seagate_value(attr_name, val) if not is_nvme else val
+            if check_threshold(check_val, rule):
+                if should_show_attr(attr_name):
+                    display = rule.get('display', attr_name)
+                    issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
+
+    return issues
+
+
+def classify_disk(r: dict, thresholds: dict, history: dict = None,
+                  delta_days: float = None) -> str:
+    """Classify disk status based on visible issues (respecting delta filter).
+
+    Returns 'critical', 'warning', or 'ok'.
+    """
+    issues = get_disk_issues(r, thresholds, history, delta_days)
+
+    for issue in issues:
+        if issue['level'] == 'critical':
+            return 'critical'
+    for issue in issues:
+        if issue['level'] == 'warning':
+            return 'warning'
+
+    return 'ok'
+
+
+# ---------------------------------------------------------------------------
+# Threshold Loading (standalone, no dependency on diskmind-view)
+# ---------------------------------------------------------------------------
+
+DEFAULT_PRESET = 'backblaze'
+
+
+def load_thresholds_from_dir(config_dir) -> dict:
+    """Load active thresholds from a config directory.
+
+    Reads config.yaml for preset selection, then resolves from
+    thresholds.json (presets) or custom_thresholds.json.
+
+    Args:
+        config_dir: Path to config/ directory (str or Path)
+
+    Returns:
+        Dict with 'ata' and 'nvme' threshold rules.
+    """
+    from pathlib import Path
+    config_dir = Path(config_dir)
+
+    # Read preset name from config
+    config_path = config_dir / 'config.yaml'
+    config = {}
+    if config_path.exists():
+        try:
+            config = parse_simple_yaml(config_path.read_text())
+        except IOError:
+            pass
+    preset_name = config.get('threshold_preset', DEFAULT_PRESET)
+
+    # Custom preset
+    if preset_name == 'custom':
+        custom_path = config_dir / 'custom_thresholds.json'
+        if custom_path.exists():
+            try:
+                custom = json.loads(custom_path.read_text())
+                return {'ata': custom.get('ata', {}), 'nvme': custom.get('nvme', {})}
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # Load presets
+    presets = {}
+    thresholds_path = config_dir / 'thresholds.json'
+    if thresholds_path.exists():
+        try:
+            data = json.loads(thresholds_path.read_text())
+            presets = data.get('presets', {})
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    for name in (preset_name, DEFAULT_PRESET):
+        if name in presets:
+            p = presets[name]
+            return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
+
+    if presets:
+        p = next(iter(presets.values()))
+        return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
+
+    return {}
+
+
+# ---------------------------------------------------------------------------
+# Alert Generation
+# ---------------------------------------------------------------------------
+
+# Set of attributes known to be composite Seagate values
+SEAGATE_COMPOSITE_ATTRS = {'Command_Timeout', 'Raw_Read_Error_Rate', 'Seek_Error_Rate'}
+
+
+def _classify_severity(old_value, new_value, warning_rule, critical_rule, is_nvme=False) -> str:
+    """Determine alert severity for an attribute value change.
+
+    Args:
+        old_value: Previous raw value
+        new_value: Current raw value
+        warning_rule: Warning threshold rule dict (or None)
+        critical_rule: Critical threshold rule dict (or None)
+
+    Returns:
+        'critical', 'warning', 'recovery', or 'info'
+    """
+    old_exceeds_critical = check_threshold(old_value, critical_rule) if critical_rule else False
+    new_exceeds_critical = check_threshold(new_value, critical_rule) if critical_rule else False
+    old_exceeds_warning = check_threshold(old_value, warning_rule) if warning_rule else False
+    new_exceeds_warning = check_threshold(new_value, warning_rule) if warning_rule else False
+
+    if new_exceeds_critical:
+        return 'critical'
+    elif new_exceeds_warning:
+        return 'warning'
+    elif old_exceeds_critical or old_exceeds_warning:
+        return 'recovery'
+    else:
+        return 'info'
+
+
+def _fmt_val(v) -> str:
+    """Format a numeric value: show as int if whole, else float."""
+    try:
+        f = float(v)
+        return str(int(f)) if f == int(f) else str(f)
+    except (ValueError, TypeError):
+        return str(v)
+
+
+def generate_alerts(conn, readings: list[dict], thresholds: dict,
+                    timestamp: str) -> list[dict]:
+    """Compare readings against previous state and generate alerts.
+
+    Args:
+        conn: SQLite connection (must have disk_status and alerts tables)
+        readings: List of reading dicts (smart_attributes must be parsed dicts)
+        thresholds: Threshold rules dict with 'ata' and 'nvme' keys
+        timestamp: Current scan timestamp string
+
+    Returns:
+        List of newly created alert dicts (for optional notification sending).
+    """
+    cursor = conn.cursor()
+    new_alerts = []
+
+    for r in readings:
+        disk_id = r.get('disk_id') or r.get('serial', '').strip()
+        if not disk_id:
+            continue
+
+        host = r.get('host', '')
+        model = r.get('model', 'Unknown')
+        serial = r.get('serial', '')
+        device = r.get('device', '')
+        disk_type = (r.get('type') or '').strip()
+        is_nvme = disk_type == 'NVMe'
+        smart_status = r.get('smart_status', '')
+
+        # Current attributes
+        new_attrs = r.get('smart_attributes', {})
+        if isinstance(new_attrs, str):
+            try:
+                new_attrs = json.loads(new_attrs)
+            except Exception:
+                new_attrs = {}
+
+        # Get threshold rules for this disk type
+        rules = thresholds.get('nvme', {}) if is_nvme else thresholds.get('ata', {})
+        warning_rules = rules.get('warning', {})
+        critical_rules = rules.get('critical', {})
+
+        # Load previous state
+        cursor.execute(
+            'SELECT smart_status, smart_attributes FROM disk_status WHERE disk_id = ?',
+            (disk_id,))
+        row = cursor.fetchone()
+
+        if row is None:
+            # First time — save snapshot, no alerts
+            cursor.execute('''
+                INSERT INTO disk_status (disk_id, smart_status, smart_attributes, status, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (disk_id, smart_status, json.dumps(new_attrs),
+                  classify_disk(r, thresholds), timestamp))
+            conn.commit()
+            continue
+
+        old_smart_status = row[0] or ''
+        try:
+            old_attrs = json.loads(row[1]) if row[1] else {}
+        except (json.JSONDecodeError, TypeError):
+            old_attrs = {}
+
+        disk_alerts = []
+
+        # --- Typ C: SMART Status Change ---
+        if smart_status != old_smart_status and old_smart_status:
+            if smart_status == 'FAILED':
+                disk_alerts.append({
+                    'alert_type': 'smart_status',
+                    'severity': 'critical',
+                    'attribute': 'smart_status',
+                    'old_value': old_smart_status,
+                    'new_value': smart_status,
+                    'message': f'SMART Failed — {model} ({serial}) on {host} {device}',
+                })
+            elif old_smart_status == 'FAILED' and smart_status == 'PASSED':
+                disk_alerts.append({
+                    'alert_type': 'smart_status',
+                    'severity': 'recovery',
+                    'attribute': 'smart_status',
+                    'old_value': old_smart_status,
+                    'new_value': smart_status,
+                    'message': f'SMART recovered — {model} ({serial}) on {host} {device}',
+                })
+
+        # --- Typ A: Critical State Attribute Changes ---
+        for attr_name in CRITICAL_STATE_ATTRS:
+            new_val = new_attrs.get(attr_name)
+            old_val = old_attrs.get(attr_name)
+            if new_val is None:
+                continue
+
+            # Decode Seagate composites for comparison
+            if not is_nvme and attr_name in SEAGATE_COMPOSITE_ATTRS:
+                new_decoded = decode_seagate_value(attr_name, new_val)
+                old_decoded = decode_seagate_value(attr_name, old_val) if old_val is not None else None
+            else:
+                try:
+                    new_decoded = float(new_val)
+                except (ValueError, TypeError):
+                    continue
+                try:
+                    old_decoded = float(old_val) if old_val is not None else None
+                except (ValueError, TypeError):
+                    old_decoded = None
+
+            # Skip if unchanged
+            if old_decoded is not None and new_decoded == old_decoded:
+                continue
+
+            # First time seeing this attr — no comparison possible
+            if old_decoded is None:
+                continue
+
+            # Temperature: skip small fluctuations (< 5°C)
+            if attr_name in TEMPERATURE_ATTRS:
+                if abs(new_decoded - old_decoded) < TEMPERATURE_MIN_DELTA:
+                    continue
+
+            severity = _classify_severity(
+                old_decoded, new_decoded,
+                warning_rules.get(attr_name),
+                critical_rules.get(attr_name),
+            )
+
+            disk_alerts.append({
+                'alert_type': 'state_change',
+                'severity': severity,
+                'attribute': attr_name,
+                'old_value': _fmt_val(old_decoded),
+                'new_value': _fmt_val(new_decoded),
+                'message': f'{attr_name}: {_fmt_val(old_decoded)} → {_fmt_val(new_decoded)} — {model} ({serial}) on {host}',
+            })
+
+        # --- Typ B: Cumulative Event Bursts ---
+        for attr_name in CUMULATIVE_EVENT_ATTRS:
+            new_val = new_attrs.get(attr_name)
+            old_val = old_attrs.get(attr_name)
+            if new_val is None:
+                continue
+
+            if not is_nvme and attr_name in SEAGATE_COMPOSITE_ATTRS:
+                new_decoded = decode_seagate_value(attr_name, new_val)
+                old_decoded = decode_seagate_value(attr_name, old_val) if old_val is not None else None
+            else:
+                try:
+                    new_decoded = float(new_val)
+                except (ValueError, TypeError):
+                    continue
+                try:
+                    old_decoded = float(old_val) if old_val is not None else None
+                except (ValueError, TypeError):
+                    old_decoded = None
+
+            if old_decoded is None:
+                continue
+
+            delta = new_decoded - old_decoded
+            if delta <= 0:
+                continue
+
+            severity = _classify_severity(
+                old_decoded, new_decoded,
+                warning_rules.get(attr_name),
+                critical_rules.get(attr_name),
+            )
+
+            disk_alerts.append({
+                'alert_type': 'cumulative_burst',
+                'severity': severity,
+                'attribute': attr_name,
+                'old_value': _fmt_val(old_decoded),
+                'new_value': _fmt_val(new_decoded),
+                'message': f'{attr_name}: +{_fmt_val(delta)} (now {_fmt_val(new_decoded)}) — {model} ({serial}) on {host}',
+            })
+
+        # Write alerts to DB
+        alerted_attrs = set()
+        for alert in disk_alerts:
+            cursor.execute('''
+                INSERT INTO alerts
+                    (disk_id, host, timestamp, alert_type, severity,
+                     attribute, old_value, new_value, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (disk_id, host, timestamp, alert['alert_type'], alert['severity'],
+                  alert['attribute'], alert['old_value'], alert['new_value'],
+                  alert['message']))
+            alert['id'] = cursor.lastrowid
+            alert['disk_id'] = disk_id
+            alert['host'] = host
+            if alert['attribute']:
+                alerted_attrs.add(alert['attribute'])
+
+        # Build snapshot: for temperature attrs that didn't trigger an alert,
+        # keep the old reference value so gradual changes accumulate
+        snapshot_attrs = dict(new_attrs)
+        for tattr in TEMPERATURE_ATTRS:
+            if tattr not in alerted_attrs and tattr in old_attrs:
+                snapshot_attrs[tattr] = old_attrs[tattr]
+
+        # Update disk_status snapshot
+        cursor.execute('''
+            UPDATE disk_status
+            SET smart_status = ?, smart_attributes = ?, status = ?, updated_at = ?
+            WHERE disk_id = ?
+        ''', (smart_status, json.dumps(snapshot_attrs),
+              classify_disk(r, thresholds), timestamp, disk_id))
+
+        conn.commit()
+        new_alerts.extend(disk_alerts)
+
+    return new_alerts
+
+
+# ---------------------------------------------------------------------------
+# Webhook Notifications
+# ---------------------------------------------------------------------------
+
+def send_notifications(conn, alerts: list[dict], notify_config: dict,
+                       webhook_urls: list = None):
+    """Send webhook notifications for alerts that meet the configured severity.
+
+    Args:
+        conn: SQLite connection
+        alerts: List of alert dicts (as returned by generate_alerts)
+        notify_config: Notification config section from config.yaml
+        webhook_urls: List of webhook URL strings (! prefix = disabled)
+    """
+    if not alerts:
+        return
+
+    import sys
+
+    min_severity = str(notify_config.get('min_severity', 'warning')).lower()
+    include_recovery = str(notify_config.get('include_recovery', 'false')).lower() == 'true'
+
+    # Build list of enabled URLs: skip !-prefixed (disabled) entries
+    urls = [u for u in (webhook_urls or []) if u and not u.startswith('!')]
+
+    if not urls:
+        return
+
+    severity_rank = {'info': 0, 'warning': 1, 'critical': 2}
+    min_rank = severity_rank.get(min_severity, 1)
+
+    cursor = conn.cursor()
+
+    for alert in alerts:
+        sev = alert.get('severity', '')
+
+        # Recovery handled separately
+        if sev == 'recovery':
+            if not include_recovery:
+                continue
+        else:
+            if severity_rank.get(sev, -1) < min_rank:
+                continue
+
+        payload = {
+            'title': _format_alert_title(alert),
+            'message': alert.get('message', ''),
+            'severity': sev,
+            'alert_type': alert.get('alert_type', ''),
+            'disk_id': alert.get('disk_id', ''),
+            'host': alert.get('host', ''),
+            'attribute': alert.get('attribute', ''),
+            'old_value': alert.get('old_value', ''),
+            'new_value': alert.get('new_value', ''),
+        }
+
+        for url in urls:
+            success, error = _send_webhook(url, payload)
+
+            cursor.execute('''
+                INSERT INTO notification_log (alert_id, timestamp, channel, success, error)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (alert.get('id'), alert.get('timestamp', ''), 'webhook',
+                  int(success), error))
+            conn.commit()
+
+            status_str = '✓' if success else '✗'
+            print(f"  Notification {status_str}: [{sev}] {alert.get('message', '')} → {url}",
+                  file=sys.stderr)
+
+
+def _format_alert_title(alert: dict) -> str:
+    """Format a short title for webhook payloads."""
+    sev = alert.get('severity', 'info')
+    icons = {'critical': '🔴', 'warning': '🟡', 'info': 'ℹ️', 'recovery': '✅'}
+    icon = icons.get(sev, '')
+    attr = alert.get('attribute', '')
+
+    if alert.get('alert_type') == 'smart_status':
+        return f"{icon} SMART {alert.get('new_value', '')}"
+    return f"{icon} {sev.upper()}: {attr}"
+
+
+def _send_webhook(url: str, payload: dict) -> tuple:
+    """Send notification via HTTP POST.
+
+    Returns:
+        (success: bool, error: str or None)
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        data = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST',
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return (200 <= resp.status < 300, None)
+    except urllib.error.HTTPError as e:
+        return (False, f'HTTP {e.code}')
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return (False, str(e))
+
+
+# ---------------------------------------------------------------------------
+# Threshold Loading
+# ---------------------------------------------------------------------------
+
+DEFAULT_PRESET = 'backblaze'
+
+
+def load_thresholds(config_dir) -> dict:
+    """Load active thresholds from config directory.
+
+    Reads config.yaml for preset selection, then loads from
+    thresholds.json (presets) or custom_thresholds.json.
+
+    Args:
+        config_dir: Path to config/ directory
+    """
+    from pathlib import Path
+    config_dir = Path(config_dir)
+
+    # Read preset name from config
+    config_path = config_dir / 'config.yaml'
+    config = {}
+    if config_path.exists():
+        try:
+            config = parse_simple_yaml(config_path.read_text())
+        except IOError:
+            pass
+    preset_name = config.get('threshold_preset', DEFAULT_PRESET)
+
+    # Custom preset: load from custom_thresholds.json
+    if preset_name == 'custom':
+        custom_path = config_dir / 'custom_thresholds.json'
+        if custom_path.exists():
+            try:
+                custom = json.loads(custom_path.read_text())
+                return {'ata': custom.get('ata', {}), 'nvme': custom.get('nvme', {})}
+            except (json.JSONDecodeError, IOError):
+                pass
+
+    # Load presets from thresholds.json
+    presets = {}
+    thresholds_path = config_dir / 'thresholds.json'
+    if thresholds_path.exists():
+        try:
+            data = json.loads(thresholds_path.read_text())
+            presets = data.get('presets', {})
+        except (json.JSONDecodeError, IOError):
+            pass
+
+    # Resolve preset
+    for name in (preset_name, DEFAULT_PRESET):
+        if name in presets:
+            p = presets[name]
+            return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
+
+    # Last resort: first available preset
+    if presets:
+        p = next(iter(presets.values()))
+        return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
+
+    return {}
 
 
 def parse_simple_yaml(text: str) -> dict:

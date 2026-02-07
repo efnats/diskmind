@@ -13,9 +13,9 @@ database:
   path: ./data/smart.db
   retention_days: 365
 
-# Threshold preset: backblaze, conservative, relaxed
+# Threshold preset: backblaze, conservative, relaxed, custom
 threshold_preset: custom
-delta_preset: 1h
+delta_preset: 7d
 
 # Rate limit for /api/ingest (push requests)
 # Set max_requests to 0 to disable
@@ -24,3 +24,18 @@ rate_limit:
   window_seconds: 60
 
 push_token: mysecret
+
+# Notifications on disk status changes
+# All alerts appear in the Alert Panel. Webhook sends only alerts >= min_severity.
+# Sends HTTP POST (JSON) — works with Gotify, ntfy, Slack, Discord, etc.
+notifications:
+  enabled: false
+  min_severity: warning
+  cooldown_minutes: 60
+  include_recovery: false
+
+# Webhook URLs — each receives HTTP POST (JSON) for alerts.
+# Works with Gotify, ntfy, Slack, Discord, etc.
+webhook_urls:
+  # - https://ntfy.example.com/diskmind
+  # - https://gotify.example.com/message?token=xxx

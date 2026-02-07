@@ -339,6 +339,15 @@
         .host-row .host-addr { flex: 1; }
         .host-row .host-remove { width: 22px; height: 22px; border-radius: 4px; border: none; cursor: pointer; font-size: 13px; display: flex; align-items: center; justify-content: center; background: transparent; color: #999; }
         .host-row .host-remove:hover { background: #fee2e2; color: #dc2626; }
+        .wh-toggle { position: relative; width: 32px; height: 18px; flex-shrink: 0; }
+        .wh-toggle input { opacity: 0; width: 0; height: 0; }
+        .wh-toggle .wh-slider { position: absolute; cursor: pointer; inset: 0; background: #cbd5e1; border-radius: 9px; transition: 0.2s; }
+        .wh-toggle .wh-slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.2s; }
+        .wh-toggle input:checked + .wh-slider { background: #3b82f6; }
+        .wh-toggle input:checked + .wh-slider:before { transform: translateX(14px); }
+        .host-row.wh-disabled .host-addr { opacity: 0.4; text-decoration: line-through; }
+        [data-theme="dark"] .wh-toggle .wh-slider { background: #475569; }
+        [data-theme="dark"] .wh-toggle input:checked + .wh-slider { background: #3b82f6; }
         .host-meta { font-size: 11px; color: #888; font-family: inherit; white-space: nowrap; }
         .host-status { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
         .host-new { background: #e0f2fe; color: #0284c7; }
@@ -363,6 +372,73 @@
         [data-theme="dark"] .settings-tab.active { color: #3b82f6; }
         [data-theme="dark"] .settings-close { background: transparent; color: #64748b; }
         [data-theme="dark"] .settings-close:hover { background: rgba(255,255,255,0.06); color: #94a3b8; }
+        /* === Alert Panel === */
+        .alert-btn-wrap { position: relative; }
+        .alert-badge { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: white; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+        .alert-badge:empty { display: none; }
+        .alerts-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0); z-index: 1000; pointer-events: none; transition: background 0.3s; }
+        .alerts-overlay.open { background: rgba(0,0,0,0.4); pointer-events: auto; }
+        .alerts-panel { position: fixed; top: 0; right: 0; bottom: 0; width: 440px; max-width: 92vw; display: flex; flex-direction: column; overflow: hidden; background: #f0f2f5; color: #1a1a2e; box-shadow: -4px 0 24px rgba(0,0,0,0.15); transform: translateX(100%); transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); z-index: 1001; }
+        .alerts-overlay.open .alerts-panel { transform: translateX(0); }
+        .alerts-header { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; background: #ffffff; border-bottom: 1px solid #d5d9e0; flex-shrink: 0; }
+        .alerts-header h2 { font-size: 16px; font-weight: 700; margin: 0; display: flex; align-items: center; gap: 8px; }
+        .alerts-header-count { font-size: 12px; font-weight: 600; color: #64748b; }
+        .alerts-header-actions { display: flex; align-items: center; gap: 8px; }
+        .alerts-ack-all { padding: 5px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: #666; font-size: 12px; cursor: pointer; transition: all 0.15s; }
+        .alerts-ack-all:hover { background: #e2e5ea; color: #333; }
+        .alerts-ack-all:disabled { opacity: 0.3; cursor: not-allowed; }
+        .alerts-close { width: 28px; height: 28px; border-radius: 6px; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; background: transparent; color: #888; transition: all 0.15s; }
+        .alerts-close:hover { background: rgba(0,0,0,0.06); color: #333; }
+        .alerts-filters { display: flex; background: #ffffff; border-bottom: 1px solid #d5d9e0; padding: 0 16px; flex-shrink: 0; gap: 0; }
+        .alerts-filter-tab { padding: 10px 12px; font-size: 12px; font-weight: 500; color: #666; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; display: flex; align-items: center; gap: 5px; }
+        .alerts-filter-tab:hover { color: #333; }
+        .alerts-filter-tab.active { color: #3b82f6; border-bottom-color: #3b82f6; }
+        .alerts-filter-count { font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; }
+        .alerts-filter-tab.active .alerts-filter-count { background: rgba(59,130,246,0.1); color: #3b82f6; }
+        .alerts-filter-tab:not(.active) .alerts-filter-count { background: rgba(0,0,0,0.05); color: #94a3b8; }
+        .alerts-body { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+        .alerts-body:hover { scrollbar-color: rgba(150,150,150,0.4) transparent; }
+        .alerts-body::-webkit-scrollbar { width: 6px; }
+        .alerts-body::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+        .alerts-body:hover::-webkit-scrollbar-thumb { background: rgba(150,150,150,0.4); }
+        .alerts-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 14px; gap: 8px; }
+        .alerts-empty svg { opacity: 0.3; }
+        .alert-item { display: grid; grid-template-columns: 10px 1fr auto; gap: 12px; align-items: start; padding: 14px 20px; border-bottom: 1px solid #e2e5ea; transition: background 0.1s; cursor: default; }
+        .alert-item:hover { background: rgba(0,0,0,0.02); }
+        .alert-item.unread { background: rgba(59,130,246,0.04); }
+        .alert-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+        .alert-dot.critical { background: #ef4444; }
+        .alert-dot.warning { background: #f59e0b; }
+        .alert-dot.info { background: #3b82f6; }
+        .alert-dot.recovery { background: #10b981; }
+        .alert-content { min-width: 0; }
+        .alert-msg { font-size: 13px; color: #333; word-break: break-word; }
+        .alert-meta { font-size: 11px; color: #94a3b8; margin-top: 3px; display: flex; gap: 10px; align-items: center; }
+        .alert-sev { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; align-self: start; margin-top: 3px; }
+        .alert-sev.critical { background: rgba(239,68,68,0.1); color: #ef4444; }
+        .alert-sev.warning { background: rgba(245,158,11,0.1); color: #d97706; }
+        .alert-sev.info { background: rgba(59,130,246,0.1); color: #3b82f6; }
+        .alert-sev.recovery { background: rgba(16,185,129,0.1); color: #10b981; }
+        /* Alert panel dark */
+        [data-theme="dark"] .alerts-panel { background: #141c2b; color: #e2e8f0; box-shadow: -4px 0 24px rgba(0,0,0,0.4); }
+        [data-theme="dark"] .alerts-header { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .alerts-header h2 { color: #e2e8f0; }
+        [data-theme="dark"] .alerts-ack-all { border-color: #2a3a52; color: #94a3b8; }
+        [data-theme="dark"] .alerts-ack-all:hover { background: #2a3a52; color: #e2e8f0; }
+        [data-theme="dark"] .alerts-close { color: #64748b; }
+        [data-theme="dark"] .alerts-close:hover { background: rgba(255,255,255,0.06); color: #94a3b8; }
+        [data-theme="dark"] .alerts-filters { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .alerts-filter-tab { color: #64748b; }
+        [data-theme="dark"] .alerts-filter-tab:hover { color: #94a3b8; }
+        [data-theme="dark"] .alerts-filter-tab.active { color: #3b82f6; }
+        [data-theme="dark"] .alerts-filter-tab:not(.active) .alerts-filter-count { background: rgba(255,255,255,0.06); color: #64748b; }
+        [data-theme="dark"] .alert-item { border-color: #2a3a52; }
+        [data-theme="dark"] .alert-item:hover { background: rgba(255,255,255,0.02); }
+        [data-theme="dark"] .alert-item.unread { background: rgba(59,130,246,0.06); }
+        [data-theme="dark"] .alert-msg { color: #e2e8f0; }
+        [data-theme="dark"] .alert-meta { color: #64748b; }
+        [data-theme="dark"] .alerts-body:hover { scrollbar-color: rgba(200,200,200,0.2) transparent; }
+        [data-theme="dark"] .alerts-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
         [data-theme="dark"] .settings-section-title { color: #e2e8f0; }
         [data-theme="dark"] .settings-section-hint { color: #64748b; }
         [data-theme="dark"] .settings-divider { background: #2a3a52; }
@@ -447,6 +523,12 @@
                     <svg id="themeSun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
                     <svg id="themeMoon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
                 </button>
+                <div class="alert-btn-wrap">
+                    <button class="btn icon-btn" onclick="toggleAlerts()" id="alertsBtn" title="Alerts">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    </button>
+                    <span class="alert-badge" id="alertBadge"></span>
+                </div>
                 <button class="btn icon-btn" onclick="toggleSettings()" id="settingsBtn" title="Settings">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 </button>
@@ -586,6 +668,33 @@
         <footer class="footer">diskmind v{{VERSION}}</footer>
     </div>
     
+    <!-- Alerts Overlay -->
+    <div id="alertsOverlay" class="alerts-overlay" onclick="if(event.target===this)toggleAlerts()">
+        <div class="alerts-panel" onclick="event.stopPropagation()">
+            <div class="alerts-header">
+                <h2>Alerts <span class="alerts-header-count" id="alertsHeaderCount"></span></h2>
+                <div class="alerts-header-actions">
+                    <button class="alerts-ack-all" id="alertsAckAll" onclick="acknowledgeAllAlerts()" title="Mark all as read">Mark all read</button>
+                    <button class="alerts-close" onclick="toggleAlerts();toggleSettings('notifications')" title="Notification settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+                    <button class="alerts-close" onclick="toggleAlerts()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </div>
+            </div>
+            <div class="alerts-filters" id="alertsFilters">
+                <div class="alerts-filter-tab active" data-sev="all" onclick="filterAlerts('all')">All <span class="alerts-filter-count" id="alertCountAll"></span></div>
+                <div class="alerts-filter-tab" data-sev="critical" onclick="filterAlerts('critical')">Critical <span class="alerts-filter-count" id="alertCountCritical"></span></div>
+                <div class="alerts-filter-tab" data-sev="warning" onclick="filterAlerts('warning')">Warning <span class="alerts-filter-count" id="alertCountWarning"></span></div>
+                <div class="alerts-filter-tab" data-sev="info" onclick="filterAlerts('info')">Info <span class="alerts-filter-count" id="alertCountInfo"></span></div>
+                <div class="alerts-filter-tab" data-sev="recovery" onclick="filterAlerts('recovery')">Recovery <span class="alerts-filter-count" id="alertCountRecovery"></span></div>
+            </div>
+            <div class="alerts-body" id="alertsBody">
+                <div class="alerts-empty" id="alertsEmpty">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    <span>No alerts yet</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <!-- Settings Overlay -->
     <div id="settingsOverlay" class="settings-overlay" onclick="if(event.target===this)toggleSettings()">
         <div class="settings-panel" id="settingsPanel" onclick="event.stopPropagation()">
@@ -596,6 +705,7 @@
             <div class="settings-tabs">
                 <div class="settings-tab active" data-tab="general" onclick="switchSettingsTab('general')">General</div>
                 <div class="settings-tab" data-tab="thresholds" onclick="switchSettingsTab('thresholds')">Thresholds</div>
+                <div class="settings-tab" data-tab="notifications" onclick="switchSettingsTab('notifications')">Notifications</div>
             </div>
             <div class="settings-body">
                 <!-- General Tab -->
@@ -718,6 +828,58 @@
                             </table>
                         </div>
                     </div>
+                </div>
+                
+                <!-- Notifications Tab -->
+                <div class="settings-tab-content" id="tabNotifications">
+                    <div class="settings-row">
+                        <span class="settings-row-label">Minimum severity <span class="info-icon" data-tip="Only send webhook for alerts at or above this severity level.">ⓘ</span></span>
+                        <div class="custom-select" id="notifyMinSeverityWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyMinSeverityWrapper')">
+                                <span class="custom-select-value">Warning</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="info">Info</div>
+                                <div class="custom-select-option selected" data-value="warning">Warning</div>
+                                <div class="custom-select-option" data-value="critical">Critical</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="notifyMinSeveritySelect" value="warning">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Include recovery <span class="info-icon" data-tip="Also send a webhook when a previously elevated value returns to normal.">ⓘ</span></span>
+                        <div class="custom-select" id="notifyRecoveryWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyRecoveryWrapper')">
+                                <span class="custom-select-value">No</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option selected" data-value="false">No</div>
+                                <div class="custom-select-option" data-value="true">Yes</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="notifyRecoverySelect" value="false">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Cooldown <span class="info-icon" data-tip="Minimum minutes between webhook notifications for the same disk. Prevents notification storms.">ⓘ</span></span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <input type="number" id="notifyCooldown" class="settings-input input-small" value="60" min="0" max="1440" onblur="saveNotifySettings()" onkeydown="if(event.key==='Enter'){this.blur()}">
+                            <span style="font-size: 13px; color: var(--text-muted);">min</span>
+                        </div>
+                    </div>
+                    
+                    <div style="padding-top: 4px;">
+                        <span class="settings-row-label" style="padding: 8px 0; display: block;">Webhook URLs <span class="info-icon" data-tip="Each URL receives HTTP POST with alert data. Works with Gotify, ntfy, Slack, Discord, etc.">ⓘ</span></span>
+                        <div class="hosts-editor" id="webhookUrlsList"></div>
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" id="webhookUrlInput" class="host-input" placeholder="https://ntfy.example.com/diskmind" onkeydown="if(event.key==='Enter'){addWebhookUrl()}">
+                            <button class="host-add-btn" onclick="addWebhookUrl()">Add</button>
+                        </div>
+                    </div>
+                    <div id="notifyStatus" style="font-size: 12px; padding-top: 8px; text-align: center; min-height: 20px;"></div>
                 </div>
             </div>
         </div>
@@ -990,6 +1152,8 @@
                 else if (wrapper.id === 'tempUnitWrapper') callback = () => saveTempUnit();
                 else if (wrapper.id === 'refreshIntervalWrapper') callback = () => saveRefreshInterval();
                 else if (wrapper.id === 'retentionWrapper') callback = () => saveRetention();
+                else if (wrapper.id === 'notifyMinSeverityWrapper') callback = () => saveNotifySettings();
+                else if (wrapper.id === 'notifyRecoveryWrapper') callback = () => saveNotifySettings();
                 
                 selectOption(wrapper.id, value, label, callback);
             });
@@ -1219,6 +1383,7 @@
                 hideConnectionBanner();
                 _consecutiveFailures = 0;
             }
+            loadAlertBadge();
         } catch (e) {
             _consecutiveFailures++;
             if (_consecutiveFailures === 1) {
@@ -1938,6 +2103,192 @@
     
     // --- Settings Panel ---
     
+    // --- Alerts Panel ---
+    let alertsData = [];
+    let alertsUnread = 0;
+    let alertsFilter = 'all';
+    
+    const FRIENDLY_ATTR_NAMES = {
+        'Temperature_Celsius': 'Temp',
+        'Airflow_Temperature_Cel': 'Airflow Temp',
+        'Temperature': 'Temp',
+        'Reallocated_Sector_Ct': 'Reallocated Sectors',
+        'Current_Pending_Sector': 'Pending Sectors',
+        'Offline_Uncorrectable': 'Offline Uncorrectable',
+        'Command_Timeout': 'Command Timeouts',
+        'UDMA_CRC_Error_Count': 'CRC Errors',
+        'Reported_Uncorrect': 'Reported Uncorrectable',
+        'Power_Off_Retract_Count': 'Power-Off Retracts',
+        'Unsafe_Shutdowns': 'Unsafe Shutdowns',
+        'Error_Information_Log_Entries': 'Error Log Entries',
+        'Media_and_Data_Integrity_Errors': 'Media Errors',
+        'Critical_Warning': 'Critical Warning',
+        'Percentage_Used': 'Wear %',
+        'Available_Spare': 'Spare %',
+    };
+    
+    const TEMP_ATTRS = new Set(['Temperature_Celsius', 'Airflow_Temperature_Cel', 'Temperature']);
+    
+    function friendlyAlertMsg(alert) {
+        const attr = alert.attribute || '';
+        const friendly = FRIENDLY_ATTR_NAMES[attr] || attr;
+        
+        if (alert.alert_type === 'smart_status') {
+            return alert.new_value === 'FAILED' ? 'SMART Failed' : 'SMART Recovered';
+        }
+        
+        const unit = TEMP_ATTRS.has(attr) ? '°C' : '';
+        
+        if (alert.alert_type === 'cumulative_burst') {
+            const delta = (parseFloat(alert.new_value) - parseFloat(alert.old_value));
+            return `${friendly}: +${Math.round(delta)} (now ${alert.new_value}${unit})`;
+        }
+        
+        return `${friendly}: ${alert.old_value} → ${alert.new_value}${unit}`;
+    }
+    
+    function friendlyDiskInfo(alert) {
+        // Extract from message: everything after " — "
+        const parts = (alert.message || '').split(' — ');
+        return parts[1] || '';
+    }
+    
+    function toggleAlerts() {
+        const overlay = document.getElementById('alertsOverlay');
+        const isOpen = overlay.classList.contains('open');
+        if (!isOpen) {
+            overlay.classList.add('open');
+            loadAlerts();
+        } else {
+            overlay.classList.remove('open');
+        }
+    }
+    
+    async function loadAlerts() {
+        try {
+            const res = await fetch('/api/alerts?limit=200');
+            const data = await res.json();
+            alertsData = data.alerts || [];
+            alertsUnread = data.unread || 0;
+            renderAlerts();
+            updateAlertBadge();
+        } catch (e) {
+            console.error('Failed to load alerts:', e);
+        }
+    }
+    
+    async function loadAlertBadge() {
+        try {
+            const res = await fetch('/api/alerts?limit=1');
+            const data = await res.json();
+            alertsUnread = data.unread || 0;
+            updateAlertBadge();
+        } catch (e) { /* silent */ }
+    }
+    
+    function updateAlertBadge() {
+        const badge = document.getElementById('alertBadge');
+        if (alertsUnread > 0) {
+            badge.textContent = alertsUnread > 99 ? '99+' : alertsUnread;
+        } else {
+            badge.textContent = '';
+        }
+    }
+    
+    function filterAlerts(sev) {
+        alertsFilter = sev;
+        document.querySelectorAll('.alerts-filter-tab').forEach(t => {
+            t.classList.toggle('active', t.dataset.sev === sev);
+        });
+        renderAlerts();
+    }
+    
+    function renderAlerts() {
+        const body = document.getElementById('alertsBody');
+        const empty = document.getElementById('alertsEmpty');
+        const countEl = document.getElementById('alertsHeaderCount');
+        const ackBtn = document.getElementById('alertsAckAll');
+        
+        // Count by severity
+        const counts = { all: alertsData.length, critical: 0, warning: 0, info: 0, recovery: 0 };
+        alertsData.forEach(a => { if (counts[a.severity] !== undefined) counts[a.severity]++; });
+        
+        // Update filter tab counts
+        for (const [sev, count] of Object.entries(counts)) {
+            const el = document.getElementById('alertCount' + sev.charAt(0).toUpperCase() + sev.slice(1));
+            if (el) el.textContent = count || '';
+        }
+        
+        // Filter
+        const filtered = alertsFilter === 'all'
+            ? alertsData
+            : alertsData.filter(a => a.severity === alertsFilter);
+        
+        if (!filtered.length) {
+            empty.style.display = '';
+            countEl.textContent = alertsUnread > 0 ? `(${alertsUnread} unread)` : '';
+            ackBtn.disabled = alertsUnread === 0;
+            body.querySelectorAll('.alert-item').forEach(el => el.remove());
+            return;
+        }
+        
+        empty.style.display = 'none';
+        countEl.textContent = alertsUnread > 0 ? `(${alertsUnread} unread)` : '';
+        ackBtn.disabled = alertsUnread === 0;
+        
+        // Build items
+        const fragment = document.createDocumentFragment();
+        for (const alert of filtered) {
+            const el = document.createElement('div');
+            el.className = 'alert-item' + (alert.acknowledged ? '' : ' unread');
+            
+            const msg = friendlyAlertMsg(alert);
+            const disk = friendlyDiskInfo(alert);
+            
+            el.innerHTML = `
+                <div class="alert-dot ${alert.severity}"></div>
+                <div class="alert-content">
+                    <div class="alert-msg">${escapeHtml(msg)}</div>
+                    <div class="alert-meta">
+                        <span>${formatAge(alert.timestamp)}</span>
+                        <span>${escapeHtml(disk)}</span>
+                    </div>
+                </div>
+                <span class="alert-sev ${alert.severity}">${alert.severity}</span>
+            `;
+            fragment.appendChild(el);
+        }
+        
+        // Replace content
+        body.querySelectorAll('.alert-item').forEach(el => el.remove());
+        body.appendChild(fragment);
+    }
+    
+    function escapeHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+    
+    async function acknowledgeAllAlerts() {
+        try {
+            await fetch('/api/alerts/acknowledge', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ all: true })
+            });
+            // Update local state
+            alertsData.forEach(a => a.acknowledged = true);
+            alertsUnread = 0;
+            renderAlerts();
+            updateAlertBadge();
+        } catch (e) {
+            console.error('Failed to acknowledge alerts:', e);
+        }
+    }
+    
+    // --- Settings Panel (cont.) ---
+    
     function toggleSettings(tab = 'general') {
         const overlay = document.getElementById('settingsOverlay');
         const isOpen = overlay.classList.contains('open');
@@ -1963,6 +2314,7 @@
         // Update tab content
         document.getElementById('tabGeneral').classList.toggle('active', tab === 'general');
         document.getElementById('tabThresholds').classList.toggle('active', tab === 'thresholds');
+        document.getElementById('tabNotifications').classList.toggle('active', tab === 'notifications');
         
         // Adjust panel width
         if (tab === 'thresholds') {
@@ -1970,6 +2322,10 @@
             renderThresholdEditor();
         } else {
             panel.classList.remove('wide');
+        }
+        
+        if (tab === 'notifications') {
+            loadNotifySettings();
         }
     }
     
@@ -2499,6 +2855,138 @@
         } else {
             toggleSettings('thresholds');
         }
+    }
+    
+    // --- Notification Settings ---
+    
+    let webhookUrls = [];  // [{url, enabled}, ...]
+    
+    function parseWebhookUrls(raw) {
+        return (raw || []).map(s => {
+            if (s.startsWith('!')) return { url: s.slice(1), enabled: false };
+            return { url: s, enabled: true };
+        });
+    }
+    
+    function serializeWebhookUrls() {
+        return webhookUrls.map(w => w.enabled ? w.url : '!' + w.url);
+    }
+    
+    function loadNotifySettings() {
+        if (!settingsData) return;
+        const n = settingsData.notifications || {};
+        setDropdownValue('notifyMinSeverityWrapper', n.min_severity || 'warning');
+        const recovery = String(n.include_recovery || 'false').toLowerCase() === 'true';
+        setDropdownValue('notifyRecoveryWrapper', recovery ? 'true' : 'false');
+        document.getElementById('notifyCooldown').value = n.cooldown_minutes || 60;
+        document.getElementById('notifyStatus').textContent = '';
+        webhookUrls = parseWebhookUrls(settingsData.webhook_urls);
+        renderWebhookUrls();
+    }
+    
+    async function saveNotifySettings() {
+        const payload = {
+            notifications: {
+                min_severity: document.getElementById('notifyMinSeveritySelect').value,
+                include_recovery: document.getElementById('notifyRecoverySelect').value === 'true',
+                cooldown_minutes: parseInt(document.getElementById('notifyCooldown').value) || 60,
+            }
+        };
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.notifications = payload.notifications;
+            }
+        } catch (e) {
+            console.error('Failed to save notification settings:', e);
+        }
+    }
+    
+    async function saveWebhookUrls() {
+        const serialized = serializeWebhookUrls();
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ webhook_urls: serialized }),
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.webhook_urls = serialized;
+            }
+        } catch (e) {
+            console.error('Failed to save webhook URLs:', e);
+        }
+    }
+    
+    function renderWebhookUrls() {
+        const container = document.getElementById('webhookUrlsList');
+        if (!webhookUrls.length) {
+            container.innerHTML = '<div style="font-size:12px;color:#999;padding:4px 0">No webhook URLs configured</div>';
+            return;
+        }
+        container.innerHTML = webhookUrls.map((w, i) => `<div class="host-row${w.enabled ? '' : ' wh-disabled'}">
+            <label class="wh-toggle"><input type="checkbox" ${w.enabled ? 'checked' : ''} onchange="toggleWebhookUrl(${i})"><span class="wh-slider"></span></label>
+            <span class="host-addr" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(w.url)}">${escapeHtml(w.url)}</span>
+            <button class="host-remove" onclick="testWebhookUrl(${i})" title="Test" style="color:var(--text-muted)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+            <button class="host-remove" onclick="removeWebhookUrl(${i})" title="Remove">✕</button>
+        </div>`).join('');
+    }
+    
+    async function addWebhookUrl() {
+        const input = document.getElementById('webhookUrlInput');
+        const url = input.value.trim();
+        if (!url) return;
+        if (webhookUrls.some(w => w.url === url)) { input.value = ''; return; }
+        webhookUrls.push({ url, enabled: true });
+        input.value = '';
+        renderWebhookUrls();
+        await saveWebhookUrls();
+    }
+    
+    async function removeWebhookUrl(index) {
+        webhookUrls.splice(index, 1);
+        renderWebhookUrls();
+        await saveWebhookUrls();
+    }
+    
+    async function toggleWebhookUrl(index) {
+        webhookUrls[index].enabled = !webhookUrls[index].enabled;
+        renderWebhookUrls();
+        await saveWebhookUrls();
+    }
+    
+    async function testWebhookUrl(index) {
+        const url = webhookUrls[index].url;
+        const statusEl = document.getElementById('notifyStatus');
+        statusEl.style.color = 'var(--text-muted)';
+        statusEl.textContent = 'Sending…';
+        try {
+            const res = await fetch('/api/test-webhook', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ url }),
+            });
+            const result = await res.json();
+            if (result.success) {
+                statusEl.style.color = 'var(--success)';
+                statusEl.textContent = 'Test sent successfully';
+            } else {
+                statusEl.style.color = 'var(--danger)';
+                statusEl.textContent = result.error || 'Failed to send';
+            }
+        } catch (e) {
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = 'Request failed';
+        }
+        setTimeout(() => statusEl.textContent = '', 3000);
     }
     
     function renderThresholdEditor() {

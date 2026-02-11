@@ -1,10 +1,9 @@
 # diskmind configuration
 
 hosts:
-  - push:192.168.28.10
-  - ssh:root@192.168.37.10
-  - push:192.168.28.15
-  # - root@192.168.1.2
+  - push:192.168.1.10
+  - ssh:root@192.168.1.20
+  # - push:192.168.1.30
 
 ssh:
   timeout: 30
@@ -14,8 +13,8 @@ database:
   retention_days: 365
 
 # Threshold preset: backblaze, conservative, relaxed, custom
-threshold_preset: custom
-delta_preset: 24h
+threshold_preset: backblaze
+delta_preset: 7d
 
 # Rate limit for /api/ingest (push requests)
 # Set max_requests to 0 to disable
@@ -23,23 +22,24 @@ rate_limit:
   max_requests: 10
   window_seconds: 60
 
-push_token: mysecret
+push_token: changeme
 
 # Alert Panel settings
 panel:
-  alert_retention_days: 1
+  alert_retention_days: 7
   alert_sound: warning
 
 # Push notification settings
 # All alerts appear in the Alert Panel. Webhook sends only alerts >= min_severity.
-# Sends HTTP POST (JSON) — works with Gotify, ntfy, Slack, Discord, etc.
 notifications:
   min_severity: warning
   cooldown_minutes: 15
   include_recovery: false
 
 # Webhook URLs — each receives HTTP POST (JSON) for alerts.
+# Prefix with service type: ntfy:, gotify:, or generic (no prefix).
 # Works with Gotify, ntfy, Slack, Discord, etc.
 webhook_urls:
-  # - https://ntfy.example.com/diskmind
-  # - https://gotify.example.com/message?token=xxx
+  # - ntfy:https://ntfy.example.com/diskmind
+  # - gotify:https://gotify.example.com/message?token=xxx
+  # - https://hooks.slack.com/services/xxx/yyy/zzz

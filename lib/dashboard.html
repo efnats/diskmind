@@ -174,7 +174,7 @@
         .host-group.collapsed .host-content { display: none; }
         
         .disk-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        .disk-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        .disk-table th { text-align: left; padding: 10px 14px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); border-bottom: 1px solid var(--border); vertical-align: bottom; white-space: nowrap; }
         .disk-table th.sortable { cursor: pointer; user-select: none; transition: color 0.15s; }
         .disk-table th.sortable:hover { color: var(--text-primary); }
         .sort-icon { opacity: 0.4; margin-left: 4px; font-size: 10px; }
@@ -207,9 +207,11 @@
         .muted { color: var(--text-muted); }
         .mono { font-family: monospace; font-size: 12px; }
         
-        .detail-row { display: none; }
-        .detail-row.visible { display: table-row; }
-        .detail-row td { padding: 0; background: var(--bg-hover); }
+        .detail-row td { padding: 0; }
+        .detail-row.visible td { background: var(--bg-hover); }
+        .detail-anim { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.25s ease-out; }
+        .detail-row.visible .detail-anim { grid-template-rows: 1fr; }
+        .detail-anim-inner { overflow: hidden; min-height: 0; }
         .detail-panel { display: flex; border-top: 1px solid var(--border); }
 
         .detail-sidebar { min-width: 170px; max-width: 200px; padding: 14px 18px; border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: 14px; background: var(--bg-hover); flex-shrink: 0; }
@@ -287,7 +289,6 @@
         [data-theme="dark"] .settings-body:hover { scrollbar-color: rgba(200,200,200,0.2) transparent; }
         [data-theme="dark"] .settings-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
         [data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(200,200,200,0.35); }
-        .settings-section-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #333; }
         .settings-section-hint { font-size: 12px; color: #777; margin: 0 0 10px 0; }
         .settings-divider { height: 1px; background: #e2e5ea; margin: 20px 0; }
         .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid #e2e5ea; }
@@ -345,23 +346,35 @@
         .wh-toggle .wh-slider:before { content: ""; position: absolute; height: 14px; width: 14px; left: 2px; bottom: 2px; background: white; border-radius: 50%; transition: 0.2s; }
         .wh-toggle input:checked + .wh-slider { background: #3b82f6; }
         .wh-toggle input:checked + .wh-slider:before { transform: translateX(14px); }
-        .host-row.wh-disabled .host-addr { opacity: 0.4; text-decoration: line-through; }
         [data-theme="dark"] .wh-toggle .wh-slider { background: #475569; }
         [data-theme="dark"] .wh-toggle input:checked + .wh-slider { background: #3b82f6; }
+        .sev-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; position: relative; top: -1px; }
+        .settings-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
+        [data-theme="dark"] .settings-section-title { color: #94a3b8; }
+        .wh-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; }
+        .wh-row:last-child { border-bottom: none; }
+        .wh-row.wh-disabled .wh-url { opacity: 0.4; text-decoration: line-through; }
+        .wh-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+        .wh-svc-badge { padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; flex-shrink: 0; font-family: 'SF Mono', 'Consolas', monospace; user-select: none; transition: all 0.15s; }
+        .wh-svc-badge:hover { border-color: var(--accent); color: var(--accent); }
+        .wh-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .wh-action-btn { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; font-family: inherit; }
+        .wh-action-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .wh-del-confirm { background: #dc2626 !important; color: #fff !important; border-color: #dc2626 !important; }
+        .wh-status { font-size: 11px; color: var(--text-muted); margin-left: 4px; flex-shrink: 0; }
+        .wh-status.wh-err { color: #ef4444; }
         .host-meta { font-size: 11px; color: #888; font-family: inherit; white-space: nowrap; }
         .host-status { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
         .host-new { background: #e0f2fe; color: #0284c7; }
         [data-theme="dark"] .host-meta { color: #64748b; }
         [data-theme="dark"] .host-new { background: #0c4a6e; color: #7dd3fc; }
         .hosts-actions { display: flex; gap: 6px; margin-bottom: 4px; }
-        .host-input { flex: 1; padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; background: #ffffff; color: #1a1a2e; outline: none; }
-        .host-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
-        .host-add-btn { padding: 6px 14px; border: none; border-radius: 6px; background: #3b82f6; color: white; font-size: 12px; font-weight: 600; cursor: pointer; }
-        .host-add-btn:hover { background: #2563eb; }
+        .host-input { flex: 1; padding: 6px 10px; border: 1px dashed #d5d9e0; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; background: #ffffff; color: #1a1a2e; outline: none; }
+        .host-input:focus { border-style: solid; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
         [data-theme="dark"] .host-row { background: #1a2538; border-color: #2a3a52; color: #e2e8f0; }
         [data-theme="dark"] .host-row .host-remove:hover { background: #7f1d1d; color: #fca5a5; }
-        [data-theme="dark"] .host-input { background: #1a2538; border-color: #2a3a52; color: #e2e8f0; }
-        [data-theme="dark"] .host-input:focus { border-color: #3b82f6; }
+        [data-theme="dark"] .host-input { background: #1a2538; border-color: #2a3a52; border-style: dashed; color: #e2e8f0; }
+        [data-theme="dark"] .host-input:focus { border-style: solid; border-color: #3b82f6; }
         /* Dark mode overrides */
         [data-theme="dark"] .settings-panel { background: #141c2b; color: #e2e8f0; box-shadow: -4px 0 24px rgba(0,0,0,0.4); }
         [data-theme="dark"] .settings-header { background: #1a2538; border-color: #2a3a52; }
@@ -439,7 +452,6 @@
         [data-theme="dark"] .alert-meta { color: #64748b; }
         [data-theme="dark"] .alerts-body:hover { scrollbar-color: rgba(200,200,200,0.2) transparent; }
         [data-theme="dark"] .alerts-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
-        [data-theme="dark"] .settings-section-title { color: #e2e8f0; }
         [data-theme="dark"] .settings-section-hint { color: #64748b; }
         [data-theme="dark"] .settings-divider { background: #2a3a52; }
         [data-theme="dark"] .settings-row { border-bottom-color: #2a3a52; }
@@ -832,54 +844,98 @@
                 
                 <!-- Notifications Tab -->
                 <div class="settings-tab-content" id="tabNotifications">
+                    <div class="settings-section-title">Local</div>
+                    
                     <div class="settings-row">
-                        <span class="settings-row-label">Minimum severity <span class="info-icon" data-tip="Only send webhook for alerts at or above this severity level.">ⓘ</span></span>
-                        <div class="custom-select" id="notifyMinSeverityWrapper">
-                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyMinSeverityWrapper')">
-                                <span class="custom-select-value">Warning</span>
+                        <span class="settings-row-label">Alert sound</span>
+                        <div class="custom-select" id="alertSoundWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('alertSoundWrapper')">
+                                <span class="custom-select-value">Off</span>
                                 <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                             </div>
                             <div class="custom-select-options">
-                                <div class="custom-select-option" data-value="info">Info</div>
-                                <div class="custom-select-option selected" data-value="warning">Warning</div>
-                                <div class="custom-select-option" data-value="critical">Critical</div>
+                                <div class="custom-select-option selected" data-value="off">Off</div>
+                                <div class="custom-select-option" data-value="critical"><span class="sev-dot" style="background:#ef4444"></span> Critical only</div>
+                                <div class="custom-select-option" data-value="warning"><span class="sev-dot" style="background:#f59e0b"></span> Warning +</div>
+                                <div class="custom-select-option" data-value="info"><span class="sev-dot" style="background:#3b82f6"></span> All</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="alertSoundLevel" value="off">
+                    </div>
+                    
+                    <div class="settings-row" style="border-bottom: none;">
+                        <span class="settings-row-label">Keep alerts</span>
+                        <div class="custom-select" id="alertRetentionWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('alertRetentionWrapper')">
+                                <span class="custom-select-value">14 days</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="0.04">1 hour</div>
+                                <div class="custom-select-option" data-value="0.25">6 hours</div>
+                                <div class="custom-select-option" data-value="1">24 hours</div>
+                                <div class="custom-select-option" data-value="3">3 days</div>
+                                <div class="custom-select-option" data-value="7">7 days</div>
+                                <div class="custom-select-option selected" data-value="14">14 days</div>
+                                <div class="custom-select-option" data-value="30">30 days</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="alertRetentionDays" value="14">
+                    </div>
+                    
+                    <div class="settings-section-title" style="margin-top: 28px;">Push</div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Severity</span>
+                        <div class="custom-select" id="notifyMinSeverityWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyMinSeverityWrapper')">
+                                <span class="custom-select-value"><span class="sev-dot" style="background:#f59e0b"></span> Warning +</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="off">Off</div>
+                                <div class="custom-select-option" data-value="critical"><span class="sev-dot" style="background:#ef4444"></span> Critical only</div>
+                                <div class="custom-select-option selected" data-value="warning"><span class="sev-dot" style="background:#f59e0b"></span> Warning +</div>
+                                <div class="custom-select-option" data-value="info"><span class="sev-dot" style="background:#3b82f6"></span> All</div>
                             </div>
                         </div>
                         <input type="hidden" id="notifyMinSeveritySelect" value="warning">
                     </div>
                     
                     <div class="settings-row">
-                        <span class="settings-row-label">Include recovery <span class="info-icon" data-tip="Also send a webhook when a previously elevated value returns to normal.">ⓘ</span></span>
-                        <div class="custom-select" id="notifyRecoveryWrapper">
-                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyRecoveryWrapper')">
-                                <span class="custom-select-value">No</span>
+                        <span class="settings-row-label">Quiet period</span>
+                        <div class="custom-select" id="notifyCooldownWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('notifyCooldownWrapper')">
+                                <span class="custom-select-value">1 hour</span>
                                 <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                             </div>
                             <div class="custom-select-options">
-                                <div class="custom-select-option selected" data-value="false">No</div>
-                                <div class="custom-select-option" data-value="true">Yes</div>
+                                <div class="custom-select-option" data-value="0">Off</div>
+                                <div class="custom-select-option" data-value="15">15 min</div>
+                                <div class="custom-select-option" data-value="30">30 min</div>
+                                <div class="custom-select-option selected" data-value="60">1 hour</div>
+                                <div class="custom-select-option" data-value="120">2 hours</div>
+                                <div class="custom-select-option" data-value="360">6 hours</div>
+                                <div class="custom-select-option" data-value="1440">24 hours</div>
                             </div>
                         </div>
-                        <input type="hidden" id="notifyRecoverySelect" value="false">
+                        <input type="hidden" id="notifyCooldown" value="60">
                     </div>
                     
                     <div class="settings-row">
-                        <span class="settings-row-label">Cooldown <span class="info-icon" data-tip="Minimum minutes between webhook notifications for the same disk. Prevents notification storms.">ⓘ</span></span>
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                            <input type="number" id="notifyCooldown" class="settings-input input-small" value="60" min="0" max="1440" onblur="saveNotifySettings()" onkeydown="if(event.key==='Enter'){this.blur()}">
-                            <span style="font-size: 13px; color: var(--text-muted);">min</span>
-                        </div>
+                        <span class="settings-row-label">Recovery</span>
+                        <label class="wh-toggle"><input type="checkbox" id="notifyRecoveryToggle" onchange="saveNotifySettings()"><span class="wh-slider"></span></label>
                     </div>
                     
-                    <div style="padding-top: 4px;">
-                        <span class="settings-row-label" style="padding: 8px 0; display: block;">Webhook URLs <span class="info-icon" data-tip="Each URL receives HTTP POST with alert data. Works with Gotify, ntfy, Slack, Discord, etc.">ⓘ</span></span>
-                        <div class="hosts-editor" id="webhookUrlsList"></div>
-                        <div style="display: flex; gap: 6px;">
+                    <div style="padding: 14px 0 4px;">
+                        <span class="settings-row-label">Endpoints <span class="info-icon" data-tip="Each URL receives alerts as HTTP POST (JSON). Works with ntfy, Gotify, Slack, Discord, etc.">ⓘ</span></span>
+                        <div id="webhookUrlsList" style="padding-top: 4px;"></div>
+                        <div style="display: flex; align-items: center; gap: 8px; padding-top: 6px;">
                             <input type="text" id="webhookUrlInput" class="host-input" placeholder="https://ntfy.example.com/diskmind" onkeydown="if(event.key==='Enter'){addWebhookUrl()}">
-                            <button class="host-add-btn" onclick="addWebhookUrl()">Add</button>
+                            <button class="wh-action-btn" style="padding: 5px 10px; font-size: 12px;" onclick="addWebhookUrl()">Add</button>
                         </div>
+                        <div id="notifyStatus" style="font-size: 12px; padding-top: 6px; text-align: center; min-height: 18px;"></div>
                     </div>
-                    <div id="notifyStatus" style="font-size: 12px; padding-top: 8px; text-align: center; min-height: 20px;"></div>
                 </div>
             </div>
         </div>
@@ -1120,7 +1176,7 @@
         }
         
         // Update displayed value
-        valueDisplay.textContent = label;
+        valueDisplay.innerHTML = label;
         
         // Update selected state
         wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
@@ -1141,7 +1197,7 @@
                 e.stopPropagation();
                 const wrapper = opt.closest('.custom-select');
                 const value = opt.dataset.value;
-                const label = opt.textContent;
+                const label = opt.innerHTML;
                 
                 // Determine callback based on wrapper id
                 let callback = null;
@@ -1153,7 +1209,9 @@
                 else if (wrapper.id === 'refreshIntervalWrapper') callback = () => saveRefreshInterval();
                 else if (wrapper.id === 'retentionWrapper') callback = () => saveRetention();
                 else if (wrapper.id === 'notifyMinSeverityWrapper') callback = () => saveNotifySettings();
-                else if (wrapper.id === 'notifyRecoveryWrapper') callback = () => saveNotifySettings();
+                else if (wrapper.id === 'notifyCooldownWrapper') callback = () => saveNotifySettings();
+                else if (wrapper.id === 'alertRetentionWrapper') callback = () => savePanelSettings();
+                else if (wrapper.id === 'alertSoundWrapper') callback = () => savePanelSettings();
                 
                 selectOption(wrapper.id, value, label, callback);
             });
@@ -1173,14 +1231,14 @@
         
         const option = wrapper.querySelector(`.custom-select-option[data-value="${value}"]`);
         if (option) {
-            const label = option.textContent;
+            const label = option.innerHTML;
             const valueDisplay = wrapper.querySelector('.custom-select-value');
             const hiddenInput = wrapper.nextElementSibling;
             
             if (hiddenInput && hiddenInput.tagName === 'INPUT') {
                 hiddenInput.value = value;
             }
-            valueDisplay.textContent = label;
+            valueDisplay.innerHTML = label;
             
             wrapper.querySelectorAll('.custom-select-option').forEach(opt => {
                 opt.classList.toggle('selected', opt.dataset.value === value);
@@ -1389,8 +1447,7 @@
             if (_consecutiveFailures === 1) {
                 showConnectionBanner('Connection lost \u2014 retrying\u2026');
             } else {
-                const s = _consecutiveFailures === 2 ? 'retry' : 'retries';
-                showConnectionBanner('Connection lost \u2014 ' + _consecutiveFailures + ' failed ' + s, _consecutiveFailures >= 5);
+                showConnectionBanner('Connection lost \u2014 ' + _consecutiveFailures + ' failed retries', _consecutiveFailures >= 5);
             }
         }
     }
@@ -1674,7 +1731,8 @@
 
         // Calculate data availability (time since first reading)
         const hMeta = hist || {};
-        const firstReading = hMeta._first || '';
+        const firstSeen = (historyCache._first_seen || {})[diskId] || '';
+        const firstReading = firstSeen || hMeta._first || '';
         const dataAgeMs = firstReading ? (new Date() - new Date(firstReading)) : 0;
         const dataDays = dataAgeMs / 86400000;
         const dataCoversFilter = dataDays >= deltaRangeDays || deltaRangeDays >= 36500;
@@ -1729,12 +1787,9 @@
         const first = hMeta._first || '';
         const last = hMeta._last || '';
         let spanText = '';
-        if (first && last && first !== last) {
-            const d1 = new Date(first), d2 = new Date(last);
-            const diffDays = Math.round((d2 - d1) / 86400000);
-            spanText = diffDays > 0 ? `${nReadings} readings · ${diffDays}d` : `${nReadings} readings`;
-        } else if (nReadings) {
-            spanText = `${nReadings} readings`;
+        const filterLabel = deltaRangeDays >= 36500 ? 'all time' : deltaRangeDays < 1 ? Math.round(deltaRangeDays * 24) + 'h' : Math.round(deltaRangeDays) + 'd';
+        if (nReadings) {
+            spanText = `${nReadings} readings · ${filterLabel}`;
         }
         if (spanText) sbHtml += `<div class="sidebar-item"><div class="sb-label">History</div><div class="sb-sub">${spanText}</div></div>`;
 
@@ -1795,7 +1850,7 @@
             infoBanner = `<div class="data-coverage-info">ℹ Data available: ${sinceText} · Filter: ${filterStr}</div>`;
         }
 
-        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" onclick="toggleDetail('${eid}')">
+        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" data-diskid="${escapeHtml(diskId)}" data-serial="${escapeHtml(d.serial || '')}" onclick="toggleDetail('${eid}')">
             <td><span class="device-name">${d.device}</span></td>
             <td><span class="type-badge ${typeClass}">${d.type}</span></td>
             <td>${d.model || '-'}</td>
@@ -1808,8 +1863,9 @@
             <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
             <td>${issues || '-'}</td>
         </tr>
-        <tr class="detail-row" id="detail-${eid}">
+        <tr class="detail-row" id="detail-${eid}" data-diskid="${escapeHtml(diskId)}" data-serial="${escapeHtml(d.serial || '')}">
             <td colspan="11">
+                <div class="detail-anim"><div class="detail-anim-inner">
                 <div class="detail-panel">
                     <div class="detail-sidebar">${sbHtml}</div>
                     <div class="detail-main">
@@ -1834,6 +1890,7 @@
                         ${spanText ? `<div class="detail-footer">First scan: <span>${first}</span> · Last scan: <span>${last}</span></div>` : ''}
                     </div>
                 </div>
+                </div></div>
             </td>
         </tr>`;
     }
@@ -1848,6 +1905,26 @@
         if (!isOpen) target.classList.add('visible');
         const newTop = diskRow.getBoundingClientRect().top;
         window.scrollBy(0, newTop - rowTop);
+    }
+    
+    function navigateToDisk(diskId) {
+        // Close alerts panel
+        document.getElementById('alertsOverlay').classList.remove('open');
+        // Try by diskid first, then by serial (alerts store serial, rows use WWN)
+        let target = document.querySelector(`.detail-row[data-diskid="${CSS.escape(diskId)}"]`);
+        if (!target) {
+            target = document.querySelector(`.detail-row[data-serial="${CSS.escape(diskId)}"]`);
+        }
+        if (!target) return;
+        setTimeout(() => {
+            const hostGroup = target.closest('.host-group');
+            if (hostGroup && hostGroup.classList.contains('collapsed')) {
+                hostGroup.classList.remove('collapsed');
+            }
+            document.querySelectorAll('.detail-row.visible').forEach(el => el.classList.remove('visible'));
+            target.classList.add('visible');
+            target.previousElementSibling.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 150);
     }
     
     function filterStatus(s) {
@@ -2105,7 +2182,7 @@
     
     // --- Alerts Panel ---
     let alertsData = [];
-    let alertsUnread = 0;
+    let alertsUnread = -1;
     let alertsFilter = 'all';
     
     const FRIENDLY_ATTR_NAMES = {
@@ -2135,6 +2212,25 @@
         
         if (alert.alert_type === 'smart_status') {
             return alert.new_value === 'FAILED' ? 'SMART Failed' : 'SMART Recovered';
+        }
+        
+        if (alert.alert_type === 'disk_status_change') {
+            // Extract reason from message: "Disk status: x → y (reason) — disk info"
+            const reasonMatch = (alert.message || '').match(/\(([^)]+)\)/);
+            const reason = reasonMatch ? reasonMatch[1] : '';
+            let text = `Status: ${alert.old_value} → ${alert.new_value}`;
+            if (reason) text += ` (${reason})`;
+            return text;
+        }
+        
+        if (alert.alert_type === 'temperature') {
+            const temp = alert.new_value;
+            const ref = alert.old_value;
+            const deviation = (parseFloat(temp) - parseFloat(ref)).toFixed(0);
+            if (alert.message && alert.message.includes('ceiling')) {
+                return `🌡️ ${temp}°C (ceiling ${ref}°C)`;
+            }
+            return `🌡️ ${temp}°C (avg ${ref}°C, +${deviation}°C)`;
         }
         
         const unit = TEMP_ATTRS.has(attr) ? '°C' : '';
@@ -2181,8 +2277,19 @@
         try {
             const res = await fetch('/api/alerts?limit=1');
             const data = await res.json();
+            const prevUnread = alertsUnread;
             alertsUnread = data.unread || 0;
             updateAlertBadge();
+            // Play sound if new alerts appeared and severity meets threshold
+            if (alertsUnread > prevUnread && prevUnread >= 0) {
+                const snd = settingsData?.panel?.alert_sound || 'off';
+                const maxSev = data.max_severity;
+                const sevRank = { info: 1, warning: 2, critical: 3 };
+                const threshold = sevRank[snd] || 0;
+                if (threshold > 0 && (sevRank[maxSev] || 0) >= threshold) {
+                    playAlertSound();
+                }
+            }
         } catch (e) { /* silent */ }
     }
     
@@ -2200,6 +2307,13 @@
         document.querySelectorAll('.alerts-filter-tab').forEach(t => {
             t.classList.toggle('active', t.dataset.sev === sev);
         });
+        // Persist tab selection
+        if (settingsData?.panel) settingsData.panel.alert_filter_tab = sev;
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ panel: { ...settingsData?.panel, alert_filter_tab: sev } }),
+        }).catch(() => {});
         renderAlerts();
     }
     
@@ -2241,6 +2355,7 @@
         for (const alert of filtered) {
             const el = document.createElement('div');
             el.className = 'alert-item' + (alert.acknowledged ? '' : ' unread');
+            if (alert.disk_id) el.style.cursor = 'pointer';
             
             const msg = friendlyAlertMsg(alert);
             const disk = friendlyDiskInfo(alert);
@@ -2256,6 +2371,9 @@
                 </div>
                 <span class="alert-sev ${alert.severity}">${alert.severity}</span>
             `;
+            if (alert.disk_id) {
+                el.onclick = () => navigateToDisk(alert.disk_id);
+            }
             fragment.appendChild(el);
         }
         
@@ -2857,38 +2975,131 @@
         }
     }
     
+    // --- Panel Settings ---
+    
+    function loadPanelSettings() {
+        if (!settingsData) return;
+        const p = settingsData.panel || {};
+        // Backwards compat: old boolean true → 'warning', false → 'off'
+        let sndVal = p.alert_sound || 'off';
+        if (sndVal === true || sndVal === 'true') sndVal = 'warning';
+        if (sndVal === false || sndVal === 'false') sndVal = 'off';
+        setDropdownValue('alertSoundWrapper', sndVal);
+        setDropdownValue('alertRetentionWrapper', String(p.alert_retention_days || 14));
+        // Restore alert filter tab
+        if (p.alert_filter_tab) filterAlerts(p.alert_filter_tab);
+    }
+    
+    async function savePanelSettings() {
+        const payload = {
+            panel: {
+                alert_sound: document.getElementById('alertSoundLevel').value || 'off',
+                alert_retention_days: parseFloat(document.getElementById('alertRetentionDays').value) || 14,
+            }
+        };
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            const result = await res.json();
+            if (result.success) {
+                settingsData.panel = payload.panel;
+                loadAlerts();
+            }
+        } catch (e) {
+            console.error('Failed to save panel settings:', e);
+        }
+    }
+    
+    // Alert sound: short beep via Web Audio API
+    function playAlertSound() {
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.frequency.value = 660;
+            osc.type = 'sine';
+            gain.gain.value = 0.15;
+            osc.start();
+            gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+            osc.stop(ctx.currentTime + 0.3);
+        } catch (e) {}
+    }
+    
     // --- Notification Settings ---
     
-    let webhookUrls = [];  // [{url, enabled}, ...]
+    let webhookUrls = [];  // [{url, enabled, service}, ...]
+    let webhookStatus = {};  // {url: {success, error, timestamp}}
+    
+    const WH_SERVICES = ['ntfy', 'gotify', 'generic'];
     
     function parseWebhookUrls(raw) {
         return (raw || []).map(s => {
-            if (s.startsWith('!')) return { url: s.slice(1), enabled: false };
-            return { url: s, enabled: true };
+            let enabled = true;
+            if (s.startsWith('!')) { enabled = false; s = s.slice(1); }
+            for (const svc of WH_SERVICES) {
+                if (s.startsWith(svc + ':')) {
+                    return { url: s.slice(svc.length + 1), enabled, service: svc };
+                }
+            }
+            return { url: s, enabled, service: _detectService(s) };
         });
     }
     
+    function _detectService(url) {
+        const lower = url.toLowerCase();
+        if (lower.includes('ntfy')) return 'ntfy';
+        if (lower.includes('gotify')) return 'gotify';
+        return 'generic';
+    }
+    
     function serializeWebhookUrls() {
-        return webhookUrls.map(w => w.enabled ? w.url : '!' + w.url);
+        return webhookUrls.map(w => {
+            const prefix = w.enabled ? '' : '!';
+            return `${prefix}${w.service || 'generic'}:${w.url}`;
+        });
     }
     
     function loadNotifySettings() {
         if (!settingsData) return;
+        loadPanelSettings();
         const n = settingsData.notifications || {};
         setDropdownValue('notifyMinSeverityWrapper', n.min_severity || 'warning');
-        const recovery = String(n.include_recovery || 'false').toLowerCase() === 'true';
-        setDropdownValue('notifyRecoveryWrapper', recovery ? 'true' : 'false');
-        document.getElementById('notifyCooldown').value = n.cooldown_minutes || 60;
+        document.getElementById('notifyRecoveryToggle').checked = String(n.include_recovery || 'false').toLowerCase() === 'true';
+        setDropdownValue('notifyCooldownWrapper', String(n.cooldown_minutes || 60));
         document.getElementById('notifyStatus').textContent = '';
         webhookUrls = parseWebhookUrls(settingsData.webhook_urls);
+        loadWebhookStatus();
+    }
+    
+    async function loadWebhookStatus() {
+        try {
+            const res = await fetch('/api/webhook-status');
+            webhookStatus = await res.json();
+        } catch (e) {
+            webhookStatus = {};
+        }
         renderWebhookUrls();
+    }
+    
+    function formatTimeAgo(ts) {
+        if (!ts) return '';
+        const diff = (Date.now() - new Date(ts + 'Z').getTime()) / 1000;
+        if (diff < 60) return 'just now';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+        return Math.floor(diff / 86400) + 'd ago';
     }
     
     async function saveNotifySettings() {
         const payload = {
             notifications: {
                 min_severity: document.getElementById('notifyMinSeveritySelect').value,
-                include_recovery: document.getElementById('notifyRecoverySelect').value === 'true',
+                include_recovery: document.getElementById('notifyRecoveryToggle').checked,
                 cooldown_minutes: parseInt(document.getElementById('notifyCooldown').value) || 60,
             }
         };
@@ -2927,17 +3138,50 @@
     function renderWebhookUrls() {
         const container = document.getElementById('webhookUrlsList');
         if (!webhookUrls.length) {
-            container.innerHTML = '<div style="font-size:12px;color:#999;padding:4px 0">No webhook URLs configured</div>';
+            container.innerHTML = '';
             return;
         }
-        container.innerHTML = webhookUrls.map((w, i) => `<div class="host-row${w.enabled ? '' : ' wh-disabled'}">
-            <label class="wh-toggle"><input type="checkbox" ${w.enabled ? 'checked' : ''} onchange="toggleWebhookUrl(${i})"><span class="wh-slider"></span></label>
-            <span class="host-addr" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(w.url)}">${escapeHtml(w.url)}</span>
-            <button class="host-remove" onclick="testWebhookUrl(${i})" title="Test" style="color:var(--text-muted)">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
-            <button class="host-remove" onclick="removeWebhookUrl(${i})" title="Remove">✕</button>
-        </div>`).join('');
+        container.innerHTML = webhookUrls.map((w, i) => {
+            const st = webhookStatus[w.url];
+            let statusHtml = '';
+            if (st) {
+                if (st.success) {
+                    statusHtml = `<span class="wh-status">· ${formatTimeAgo(st.timestamp)} ✓</span>`;
+                } else {
+                    const errText = st.error ? ` — ${escapeHtml(st.error).substring(0, 30)}` : '';
+                    statusHtml = `<span class="wh-status wh-err">· ${formatTimeAgo(st.timestamp)} ✗${errText}</span>`;
+                }
+            }
+            const displayUrl = w.url.replace(/^https?:\/\//, '');
+            const svc = w.service || 'generic';
+            return `<div class="wh-row${w.enabled ? '' : ' wh-disabled'}">
+                <span class="wh-svc-badge" onclick="cycleWebhookService(${i})" title="Click to change">${svc}</span>
+                <span class="wh-url" title="${escapeHtml(w.url)}">${escapeHtml(displayUrl)}</span>
+                ${statusHtml}
+                <span class="wh-actions">
+                    <button class="wh-action-btn" onclick="testWebhookUrl(${i})">Test</button>
+                    <button class="wh-action-btn wh-del-btn" data-idx="${i}" onclick="confirmRemoveWebhookUrl(this,${i})">✕</button>
+                    <label class="wh-toggle"><input type="checkbox" ${w.enabled ? 'checked' : ''} onchange="toggleWebhookUrl(${i})"><span class="wh-slider"></span></label>
+                </span>
+            </div>`;
+        }).join('');
+    }
+    
+    function confirmRemoveWebhookUrl(btn, index) {
+        if (btn.dataset.confirm === '1') {
+            removeWebhookUrl(index);
+            return;
+        }
+        btn.dataset.confirm = '1';
+        btn.textContent = '?';
+        btn.classList.add('wh-del-confirm');
+        setTimeout(() => {
+            if (btn.parentNode) {
+                btn.dataset.confirm = '';
+                btn.textContent = '✕';
+                btn.classList.remove('wh-del-confirm');
+            }
+        }, 2000);
     }
     
     async function addWebhookUrl() {
@@ -2945,8 +3189,16 @@
         const url = input.value.trim();
         if (!url) return;
         if (webhookUrls.some(w => w.url === url)) { input.value = ''; return; }
-        webhookUrls.push({ url, enabled: true });
+        webhookUrls.push({ url, enabled: true, service: _detectService(url) });
         input.value = '';
+        renderWebhookUrls();
+        await saveWebhookUrls();
+    }
+    
+    async function cycleWebhookService(index) {
+        const current = webhookUrls[index].service || 'generic';
+        const next = WH_SERVICES[(WH_SERVICES.indexOf(current) + 1) % WH_SERVICES.length];
+        webhookUrls[index].service = next;
         renderWebhookUrls();
         await saveWebhookUrls();
     }
@@ -2964,27 +3216,32 @@
     }
     
     async function testWebhookUrl(index) {
-        const url = webhookUrls[index].url;
+        const w = webhookUrls[index];
         const statusEl = document.getElementById('notifyStatus');
         statusEl.style.color = 'var(--text-muted)';
-        statusEl.textContent = 'Sending…';
+        statusEl.textContent = 'Sending test…';
         try {
             const res = await fetch('/api/test-webhook', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ url }),
+                body: JSON.stringify({ url: w.url, service: w.service || 'generic' }),
             });
             const result = await res.json();
             if (result.success) {
                 statusEl.style.color = 'var(--success)';
-                statusEl.textContent = 'Test sent successfully';
+                statusEl.textContent = '✓ Test sent';
+                // Update inline status
+                webhookStatus[w.url] = { success: true, error: '', timestamp: new Date().toISOString().replace('Z','') };
+                renderWebhookUrls();
             } else {
                 statusEl.style.color = 'var(--danger)';
-                statusEl.textContent = result.error || 'Failed to send';
+                statusEl.textContent = '✗ ' + (result.error || 'Failed');
+                webhookStatus[w.url] = { success: false, error: result.error || 'Failed', timestamp: new Date().toISOString().replace('Z','') };
+                renderWebhookUrls();
             }
         } catch (e) {
             statusEl.style.color = 'var(--danger)';
-            statusEl.textContent = 'Request failed';
+            statusEl.textContent = '✗ Request failed';
         }
         setTimeout(() => statusEl.textContent = '', 3000);
     }

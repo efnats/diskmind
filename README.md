@@ -36,7 +36,7 @@ diskmind/
     config.yaml         Hosts, SSH, database, threshold preset, delta range
     thresholds.json     Threshold preset definitions
   data/               Runtime data (gitignored)
-    smart.db            SQLite database
+    diskmind.db            SQLite database
 ```
 
 ## Architecture
@@ -57,7 +57,7 @@ The central server connects via SSH, runs `diskmind-scan` on the target, and col
 │  Host B      │ ◄── SSH: run scan ──────── │                  │        │                  │
 │  (smartctl)  │ ──── CSV stdout ─────────► │                  │        │  Web dashboard   │
                                                      │                  │                  │
-                                                data/smart.db ─────────►│                  │
+                                                data/diskmind.db ─────────►│                  │
                                                                         └──────────────────┘
 ```
 
@@ -155,7 +155,7 @@ The first time the agent pushes, the host will appear in the dashboard under **P
 ./bin/diskmind-view --port 8080
 
 # Custom database path
-./bin/diskmind-view --db /path/to/smart.db
+./bin/diskmind-view --db /path/to/diskmind.db
 ```
 
 ### diskmind-scan (push mode)
@@ -192,7 +192,7 @@ ssh:
   timeout: 30
 
 database:
-  path: ./data/smart.db
+  path: ./data/diskmind.db
   retention_days: 365
 
 # Threshold preset: relaxed, conservative, backblaze

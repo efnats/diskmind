@@ -75,13 +75,16 @@ log_error() {
 # Send CSV data to server, return 0 on success
 send_to_server() {
     local csv_data="$1"
+    local scan_ts="${2:-}"  # Optional: original scan timestamp (ISO format)
     local http_code response body
     
-    # Get both HTTP status code and response body
-    # Build auth header if token is set
+    # Build headers
     local auth_args=()
     if [ -n "$PUSH_TOKEN" ]; then
-        auth_args=(-H "Authorization: Bearer ${PUSH_TOKEN}")
+        auth_args+=(-H "Authorization: Bearer ${PUSH_TOKEN}")
+    fi
+    if [ -n "$scan_ts" ]; then
+        auth_args+=(-H "X-Scan-Timestamp: ${scan_ts}")
     fi
     
     response=$(echo "$csv_data" | curl -s -w "\n%{http_code}" -X POST \
@@ -145,7 +148,13 @@ send_buffered() {
     for file in "$BUFFER_DIR"/*.csv; do
         [ -f "$file" ] || continue
         
-        send_to_server "$(cat "$file")"
+        # Extract original scan timestamp from filename (YYYYMMDD_HHMMSS.csv)
+        local basename
+        basename=$(basename "$file" .csv)
+        local scan_ts
+        scan_ts=$(echo "$basename" | sed 's/\([0-9]\{4\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)_\([0-9]\{2\}\)\([0-9]\{2\}\)\([0-9]\{2\}\)/\1-\2-\3 \4:\5:\6/')
+        
+        send_to_server "$(cat "$file")" "$scan_ts"
         rc=$?
         if [ $rc -eq 0 ]; then
             rm -f "$file"

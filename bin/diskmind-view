@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
                           get_disk_issues, check_threshold, decode_seagate_value,
                           generate_alerts, send_notifications, _send_webhook,
+                          _format_payload,
                           CUMULATIVE_EVENT_ATTRS, CRITICAL_STATE_ATTRS)
 
 from collections import defaultdict
@@ -82,12 +83,28 @@ def cleanup_old_readings(db_path: str):
     
     config = load_config()
     retention_days = config.get('database', {}).get('retention_days', 365)
-    if retention_days <= 0:
-        return
     
     conn = get_db_connection(db_path)
-    fm = get_fetch_module()
-    fm.cleanup_old_data(conn, retention_days)
+    
+    if retention_days > 0:
+        fm = get_fetch_module()
+        fm.cleanup_old_data(conn, retention_days)
+    
+    # Clean old alerts based on panel retention setting
+    alert_retention = config.get('panel', {}).get('alert_retention_days', 14)
+    try:
+        alert_retention = int(alert_retention)
+    except (ValueError, TypeError):
+        alert_retention = 14
+    if alert_retention > 0:
+        conn.execute(
+            "DELETE FROM alerts WHERE timestamp < datetime('now', ? || ' days')",
+            (str(-alert_retention),))
+        conn.execute(
+            "DELETE FROM notification_log WHERE timestamp < datetime('now', ? || ' days')",
+            (str(-alert_retention),))
+        conn.commit()
+    
     conn.close()
 
 
@@ -246,6 +263,9 @@ def get_disk_history(db_path: str, disk_id: str = None, days: int = 30) -> dict:
                 'min': min(values),
                 'max': max(values),
             }
+
+    # Include first_seen for ALL disks (independent of time window)
+    result['_first_seen'] = first_seen
 
     return result
 
@@ -644,7 +664,7 @@ def get_html_template() -> str:
 class SmartHTTPHandler(BaseHTTPRequestHandler):
     """HTTP request handler for diskmind."""
     
-    db_path = './data/smart.db'
+    db_path = './data/diskmind.db'
     fetch_script = None
     
     def log_message(self, format, *args):
@@ -779,13 +799,18 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
             elif path == '/api/alerts':
                 params = parse_qs(parsed.query)
                 limit = int(params.get('limit', ['100'])[0])
+                config = load_config()
+                panel = config.get('panel') or {}
+                retention = float(panel.get('alert_retention_days', 14))
                 conn = get_db_connection(self.db_path)
                 cursor = conn.cursor()
                 cursor.execute('''
                     SELECT id, disk_id, host, timestamp, alert_type, severity,
                            attribute, old_value, new_value, message, acknowledged
-                    FROM alerts ORDER BY timestamp DESC LIMIT ?
-                ''', (limit,))
+                    FROM alerts
+                    WHERE timestamp > datetime('now', ?)
+                    ORDER BY timestamp DESC LIMIT ?
+                ''', (f'-{retention} days', limit))
                 alerts = []
                 for row in cursor.fetchall():
                     alerts.append({
@@ -801,11 +826,29 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                         'message': row['message'],
                         'acknowledged': bool(row['acknowledged']),
                     })
-                # Count unacknowledged
-                cursor.execute('SELECT COUNT(*) FROM alerts WHERE acknowledged = 0')
+                # Count unacknowledged (within retention window)
+                cursor.execute('''
+                    SELECT COUNT(*) FROM alerts
+                    WHERE acknowledged = 0
+                      AND timestamp > datetime('now', ?)
+                ''', (f'-{retention} days',))
                 unread = cursor.fetchone()[0]
+                # Highest severity among unread alerts
+                cursor.execute('''
+                    SELECT severity FROM alerts
+                    WHERE acknowledged = 0
+                      AND timestamp > datetime('now', ?)
+                    ORDER BY CASE severity
+                        WHEN 'critical' THEN 3
+                        WHEN 'warning' THEN 2
+                        WHEN 'info' THEN 1
+                        ELSE 0 END DESC
+                    LIMIT 1
+                ''', (f'-{retention} days',))
+                row = cursor.fetchone()
+                max_sev = row[0] if row else None
                 conn.close()
-                self.send_json({'alerts': alerts, 'unread': unread})
+                self.send_json({'alerts': alerts, 'unread': unread, 'max_severity': max_sev})
             
             elif path == '/api/settings':
                 config = load_config()
@@ -834,6 +877,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     'retention_days': config.get('database', {}).get('retention_days', 365),
                     'rate_limit': config.get('rate_limit', {'max_requests': 10, 'window_seconds': 60}),
                     'notifications': config.get('notifications', {}),
+                    'panel': config.get('panel', {}),
                     'webhook_urls': config.get('webhook_urls', []),
                 })
 
@@ -843,6 +887,26 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 days = float(params.get('days', [30])[0])
                 history = get_disk_history(self.db_path, disk_id, days)
                 self.send_json(history)
+            
+            elif path == '/api/webhook-status':
+                conn = get_db_connection(self.db_path)
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT channel, success, error, MAX(timestamp) as last_ts
+                    FROM notification_log
+                    WHERE channel LIKE 'http%'
+                    GROUP BY channel
+                ''')
+                rows = cursor.fetchall()
+                conn.close()
+                status = {}
+                for ch, success, error, last_ts in rows:
+                    status[ch] = {
+                        'success': bool(success),
+                        'error': error or '',
+                        'timestamp': last_ts,
+                    }
+                self.send_json(status)
             
             else:
                 self.send_response(404)
@@ -953,6 +1017,17 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                             save_config_subkey('notifications', nkey, val if val else '')
                     result['notifications'] = notifications
                 
+                # Handle panel settings change
+                panel = data.get('panel')
+                if panel is not None:
+                    for pkey in ('alert_retention_days', 'alert_sound'):
+                        if pkey in panel:
+                            val = panel[pkey]
+                            if isinstance(val, bool):
+                                val = 'true' if val else 'false'
+                            save_config_subkey('panel', pkey, val if val else '')
+                    result['panel'] = panel
+                
                 # Handle webhook_urls change (top-level list)
                 webhook_urls = data.get('webhook_urls')
                 if webhook_urls is not None:
@@ -970,21 +1045,21 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     self.send_json({'error': 'Invalid JSON'}, 400)
                     return
                 url = req.get('url', '').strip()
+                service = req.get('service', 'generic').strip()
                 if not url:
                     self.send_json({'error': 'No URL provided'}, 400)
                     return
-                payload = {
-                    'title': '🔔 diskmind test',
-                    'message': 'This is a test notification from diskmind.',
-                    'severity': 'info',
-                    'alert_type': 'test',
-                    'disk_id': '',
-                    'host': '',
-                    'attribute': '',
-                    'old_value': '',
-                    'new_value': '',
-                }
-                success, error = _send_webhook(url, payload)
+                payload = _format_payload(
+                    service, '🔔 diskmind test',
+                    'This is a test notification from diskmind.', 'info')
+                send_url = url
+                if service == 'ntfy':
+                    parsed = urlparse(url)
+                    topic = parsed.path.strip('/')
+                    if topic:
+                        payload['topic'] = topic
+                        send_url = f"{parsed.scheme}://{parsed.netloc}/"
+                success, error = _send_webhook(send_url, payload)
                 if success:
                     self.send_json({'success': True})
                 else:
@@ -1115,8 +1190,18 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     
                     # Store in database
                     conn = fetch_module.init_database(self.db_path)
-                    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                    fetch_module.store_readings(conn, readings, timestamp)
+                    # Use client-provided scan timestamp if available (for buffered data)
+                    scan_ts = self.headers.get('X-Scan-Timestamp')
+                    if scan_ts:
+                        try:
+                            # Validate format
+                            datetime.strptime(scan_ts.strip(), '%Y-%m-%d %H:%M:%S')
+                            timestamp = scan_ts.strip()
+                        except ValueError:
+                            timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    fetch_module.store_readings(conn, readings, timestamp, source='push')
                     fetch_module.update_host_status(conn, host, 'ok', None, len(readings), timestamp)
                     # Clear any prior push attempts for this host
                     conn.execute('DELETE FROM push_attempts WHERE host = ?', (host,))
@@ -1214,7 +1299,7 @@ def main():
     parser = argparse.ArgumentParser(description='diskmind Web Server')
     parser.add_argument('-p', '--port', type=int, default=8080, help='Port (default: 8080)')
     parser.add_argument('--host', default='0.0.0.0', help='Host (default: 0.0.0.0)')
-    parser.add_argument('--db', default='./data/smart.db', help='Database path')
+    parser.add_argument('--db', default='./data/diskmind.db', help='Database path')
     parser.add_argument('--dev', action='store_true', help='Dev mode: reload HTML template on every request')
     
     args = parser.parse_args()

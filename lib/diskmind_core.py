@@ -8,8 +8,9 @@ Provides common utilities used by both diskmind-fetch and diskmind-view:
 """
 
 import json
+from datetime import datetime as _dt, timedelta as _td
 
-VERSION = '1.5'
+VERSION = '1.6'
 
 
 # ---------------------------------------------------------------------------
@@ -37,15 +38,18 @@ CRITICAL_STATE_ATTRS = {
     'Critical_Warning',
     'Percentage_Used',
     'Available_Spare',
-    'Temperature_Celsius',
-    'Airflow_Temperature_Cel',
-    'Temperature',
 }
 
-# Temperature attributes — require minimum delta to trigger alerts
-# Small fluctuations (1-2°C) are normal and shouldn't generate noise
-TEMPERATURE_ATTRS = {'Temperature_Celsius', 'Airflow_Temperature_Cel', 'Temperature'}
-TEMPERATURE_MIN_DELTA = 3
+# Temperature monitoring (Type E alerts — independent of disk status)
+TEMPERATURE_ATTRS_ATA = ('Temperature_Celsius', 'Airflow_Temperature_Cel')
+TEMPERATURE_ATTRS_NVME = ('Temperature',)
+TEMP_HARD_CEILING_ATA = 55    # °C — always alert regardless of baseline
+TEMP_HARD_CEILING_NVME = 70   # °C — NVMe runs hotter by design
+TEMP_BASELINE_DAYS = 14       # rolling average window
+TEMP_MIN_HISTORY_DAYS = 7     # minimum data before baseline alerts activate
+TEMP_DEVIATION_INFO = 8       # °C above baseline
+TEMP_DEVIATION_WARNING = 12
+TEMP_DEVIATION_CRITICAL = 18
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +158,12 @@ def get_disk_issues(r: dict, thresholds: dict, history: dict = None,
             return False
         return True
 
+    # Temperature attributes don't affect disk status — handled by Type E alerts
+    _temp_skip = set(TEMPERATURE_ATTRS_ATA + TEMPERATURE_ATTRS_NVME)
+
     # Check critical thresholds
     for attr_name, rule in rules.get('critical', {}).items():
-        if attr_name.startswith('_'):
+        if attr_name.startswith('_') or attr_name in _temp_skip:
             continue
         val = attrs.get(attr_name)
         if val is not None:
@@ -169,7 +176,7 @@ def get_disk_issues(r: dict, thresholds: dict, history: dict = None,
     # Check warning thresholds (skip if already critical for same attribute)
     critical_attrs = set(rules.get('critical', {}).keys())
     for attr_name, rule in rules.get('warning', {}).items():
-        if attr_name.startswith('_'):
+        if attr_name.startswith('_') or attr_name in _temp_skip:
             continue
         if attr_name in critical_attrs:
             val = attrs.get(attr_name)
@@ -278,33 +285,6 @@ def load_thresholds_from_dir(config_dir) -> dict:
 SEAGATE_COMPOSITE_ATTRS = {'Command_Timeout', 'Raw_Read_Error_Rate', 'Seek_Error_Rate'}
 
 
-def _classify_severity(old_value, new_value, warning_rule, critical_rule, is_nvme=False) -> str:
-    """Determine alert severity for an attribute value change.
-
-    Args:
-        old_value: Previous raw value
-        new_value: Current raw value
-        warning_rule: Warning threshold rule dict (or None)
-        critical_rule: Critical threshold rule dict (or None)
-
-    Returns:
-        'critical', 'warning', 'recovery', or 'info'
-    """
-    old_exceeds_critical = check_threshold(old_value, critical_rule) if critical_rule else False
-    new_exceeds_critical = check_threshold(new_value, critical_rule) if critical_rule else False
-    old_exceeds_warning = check_threshold(old_value, warning_rule) if warning_rule else False
-    new_exceeds_warning = check_threshold(new_value, warning_rule) if warning_rule else False
-
-    if new_exceeds_critical:
-        return 'critical'
-    elif new_exceeds_warning:
-        return 'warning'
-    elif old_exceeds_critical or old_exceeds_warning:
-        return 'recovery'
-    else:
-        return 'info'
-
-
 def _fmt_val(v) -> str:
     """Format a numeric value: show as int if whole, else float."""
     try:
@@ -351,14 +331,9 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
             except Exception:
                 new_attrs = {}
 
-        # Get threshold rules for this disk type
-        rules = thresholds.get('nvme', {}) if is_nvme else thresholds.get('ata', {})
-        warning_rules = rules.get('warning', {})
-        critical_rules = rules.get('critical', {})
-
         # Load previous state
         cursor.execute(
-            'SELECT smart_status, smart_attributes FROM disk_status WHERE disk_id = ?',
+            'SELECT smart_status, smart_attributes, status FROM disk_status WHERE disk_id = ?',
             (disk_id,))
         row = cursor.fetchone()
 
@@ -377,8 +352,47 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
             old_attrs = json.loads(row[1]) if row[1] else {}
         except (json.JSONDecodeError, TypeError):
             old_attrs = {}
+        old_disk_status = row[2] or 'ok'
+        new_disk_status = classify_disk(r, thresholds)
 
         disk_alerts = []
+
+        # --- Type D: Disk Status Change (ok→warning, warning→critical, etc.) ---
+        if new_disk_status != old_disk_status:
+            status_rank = {'ok': 0, 'warning': 1, 'critical': 2}
+            degraded = status_rank.get(new_disk_status, 0) > status_rank.get(old_disk_status, 0)
+
+            # Build reason from current issues
+            issues = get_disk_issues(r, thresholds)
+            reason = ', '.join(i['text'] for i in issues) if issues else ''
+
+            if degraded:
+                sev = new_disk_status  # warning or critical
+                msg = f'Disk status: {old_disk_status} → {new_disk_status}'
+                if reason:
+                    msg += f' ({reason})'
+                msg += f' — {model} ({serial}) on {host} {device}'
+                disk_alerts.append({
+                    'alert_type': 'disk_status_change',
+                    'severity': sev,
+                    'attribute': 'disk_status',
+                    'old_value': old_disk_status,
+                    'new_value': new_disk_status,
+                    'message': msg,
+                })
+            else:
+                msg = f'Disk status: {old_disk_status} → {new_disk_status}'
+                if reason:
+                    msg += f' ({reason})'
+                msg += f' — {model} ({serial}) on {host} {device}'
+                disk_alerts.append({
+                    'alert_type': 'disk_status_change',
+                    'severity': 'recovery',
+                    'attribute': 'disk_status',
+                    'old_value': old_disk_status,
+                    'new_value': new_disk_status,
+                    'message': msg,
+                })
 
         # --- Typ C: SMART Status Change ---
         if smart_status != old_smart_status and old_smart_status:
@@ -401,14 +415,15 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
                     'message': f'SMART recovered — {model} ({serial}) on {host} {device}',
                 })
 
-        # --- Typ A: Critical State Attribute Changes ---
+        # --- Type A: State Attribute Changes (dashboard log only) ---
+        # Monotonic counters that can never decrease (hardware constraint)
+        MONOTONIC_ATTRS = {'Reallocated_Sector_Ct', 'Media_and_Data_Integrity_Errors', 'Percentage_Used'}
         for attr_name in CRITICAL_STATE_ATTRS:
             new_val = new_attrs.get(attr_name)
             old_val = old_attrs.get(attr_name)
             if new_val is None:
                 continue
 
-            # Decode Seagate composites for comparison
             if not is_nvme and attr_name in SEAGATE_COMPOSITE_ATTRS:
                 new_decoded = decode_seagate_value(attr_name, new_val)
                 old_decoded = decode_seagate_value(attr_name, old_val) if old_val is not None else None
@@ -422,35 +437,23 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
                 except (ValueError, TypeError):
                     old_decoded = None
 
-            # Skip if unchanged
-            if old_decoded is not None and new_decoded == old_decoded:
+            if old_decoded is None or new_decoded == old_decoded:
                 continue
 
-            # First time seeing this attr — no comparison possible
-            if old_decoded is None:
+            # Skip impossible decreases on monotonic counters (SMART reporting artifacts)
+            if attr_name in MONOTONIC_ATTRS and new_decoded < old_decoded:
                 continue
-
-            # Temperature: skip small fluctuations (< 5°C)
-            if attr_name in TEMPERATURE_ATTRS:
-                if abs(new_decoded - old_decoded) < TEMPERATURE_MIN_DELTA:
-                    continue
-
-            severity = _classify_severity(
-                old_decoded, new_decoded,
-                warning_rules.get(attr_name),
-                critical_rules.get(attr_name),
-            )
 
             disk_alerts.append({
                 'alert_type': 'state_change',
-                'severity': severity,
+                'severity': 'info',
                 'attribute': attr_name,
                 'old_value': _fmt_val(old_decoded),
                 'new_value': _fmt_val(new_decoded),
                 'message': f'{attr_name}: {_fmt_val(old_decoded)} → {_fmt_val(new_decoded)} — {model} ({serial}) on {host}',
             })
 
-        # --- Typ B: Cumulative Event Bursts ---
+        # --- Type B: Cumulative Event Changes (dashboard log only) ---
         for attr_name in CUMULATIVE_EVENT_ATTRS:
             new_val = new_attrs.get(attr_name)
             old_val = old_attrs.get(attr_name)
@@ -477,23 +480,96 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
             if delta <= 0:
                 continue
 
-            severity = _classify_severity(
-                old_decoded, new_decoded,
-                warning_rules.get(attr_name),
-                critical_rules.get(attr_name),
-            )
-
             disk_alerts.append({
                 'alert_type': 'cumulative_burst',
-                'severity': severity,
+                'severity': 'info',
                 'attribute': attr_name,
                 'old_value': _fmt_val(old_decoded),
                 'new_value': _fmt_val(new_decoded),
                 'message': f'{attr_name}: +{_fmt_val(delta)} (now {_fmt_val(new_decoded)}) — {model} ({serial}) on {host}',
             })
 
+        # --- Type E: Temperature Anomaly ---
+        temp_attrs = TEMPERATURE_ATTRS_NVME if is_nvme else TEMPERATURE_ATTRS_ATA
+        hard_ceiling = TEMP_HARD_CEILING_NVME if is_nvme else TEMP_HARD_CEILING_ATA
+        for temp_attr in temp_attrs:
+            tv = new_attrs.get(temp_attr)
+            if tv is None:
+                continue
+            try:
+                temp_now = float(tv)
+            except (ValueError, TypeError):
+                continue
+
+            temp_alert = None
+
+            # Hard ceiling — always active, no baseline needed
+            if temp_now >= hard_ceiling:
+                temp_alert = {
+                    'alert_type': 'temperature',
+                    'severity': 'critical',
+                    'attribute': temp_attr,
+                    'old_value': str(hard_ceiling),
+                    'new_value': _fmt_val(temp_now),
+                    'message': f'{temp_attr}: {_fmt_val(temp_now)}°C (ceiling {hard_ceiling}°C) — {model} ({serial}) on {host}',
+                }
+            else:
+                # Baseline comparison — needs sufficient history
+                cursor.execute('''
+                    SELECT smart_attributes, timestamp FROM readings
+                    WHERE disk_id = ? AND timestamp > datetime(?, '-14 days')
+                    ORDER BY timestamp
+                ''', (disk_id, timestamp))
+                hist_rows = cursor.fetchall()
+
+                # Check minimum history span
+                if hist_rows:
+                    try:
+                        first_ts = _dt.fromisoformat(hist_rows[0][1].replace('Z', '+00:00'))
+                        last_ts = _dt.fromisoformat(hist_rows[-1][1].replace('Z', '+00:00'))
+                        history_days = (last_ts - first_ts).total_seconds() / 86400
+                    except (ValueError, TypeError):
+                        history_days = 0
+
+                    if history_days >= TEMP_MIN_HISTORY_DAYS:
+                        temps = []
+                        for hrow in hist_rows:
+                            try:
+                                hattrs = json.loads(hrow[0]) if hrow[0] else {}
+                                hv = hattrs.get(temp_attr)
+                                if hv is not None:
+                                    temps.append(float(hv))
+                            except (json.JSONDecodeError, ValueError, TypeError):
+                                continue
+
+                        if temps:
+                            avg_temp = sum(temps) / len(temps)
+                            deviation = temp_now - avg_temp
+
+                            if deviation >= TEMP_DEVIATION_CRITICAL:
+                                sev = 'critical'
+                            elif deviation >= TEMP_DEVIATION_WARNING:
+                                sev = 'warning'
+                            elif deviation >= TEMP_DEVIATION_INFO:
+                                sev = 'info'
+                            else:
+                                sev = None
+
+                            if sev:
+                                temp_alert = {
+                                    'alert_type': 'temperature',
+                                    'severity': sev,
+                                    'attribute': temp_attr,
+                                    'old_value': _fmt_val(avg_temp),
+                                    'new_value': _fmt_val(temp_now),
+                                    'message': f'{temp_attr}: {_fmt_val(temp_now)}°C (avg {_fmt_val(avg_temp)}°C, +{_fmt_val(deviation)}°C) — {model} ({serial}) on {host}',
+                                }
+
+            if temp_alert:
+                disk_alerts.append(temp_alert)
+            break  # Only use first available temp attr
+
         # Write alerts to DB
-        alerted_attrs = set()
         for alert in disk_alerts:
             cursor.execute('''
                 INSERT INTO alerts
@@ -506,23 +582,15 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
             alert['id'] = cursor.lastrowid
             alert['disk_id'] = disk_id
             alert['host'] = host
-            if alert['attribute']:
-                alerted_attrs.add(alert['attribute'])
-
-        # Build snapshot: for temperature attrs that didn't trigger an alert,
-        # keep the old reference value so gradual changes accumulate
-        snapshot_attrs = dict(new_attrs)
-        for tattr in TEMPERATURE_ATTRS:
-            if tattr not in alerted_attrs and tattr in old_attrs:
-                snapshot_attrs[tattr] = old_attrs[tattr]
+            alert['timestamp'] = timestamp
 
         # Update disk_status snapshot
         cursor.execute('''
             UPDATE disk_status
             SET smart_status = ?, smart_attributes = ?, status = ?, updated_at = ?
             WHERE disk_id = ?
-        ''', (smart_status, json.dumps(snapshot_attrs),
-              classify_disk(r, thresholds), timestamp, disk_id))
+        ''', (smart_status, json.dumps(new_attrs),
+              new_disk_status, timestamp, disk_id))
 
         conn.commit()
         new_alerts.extend(disk_alerts)
@@ -542,7 +610,9 @@ def send_notifications(conn, alerts: list[dict], notify_config: dict,
         conn: SQLite connection
         alerts: List of alert dicts (as returned by generate_alerts)
         notify_config: Notification config section from config.yaml
-        webhook_urls: List of webhook URL strings (! prefix = disabled)
+        webhook_urls: List of webhook URL strings. Format: [!]service:url
+            service: ntfy, gotify, generic (default)
+            ! prefix = disabled
     """
     if not alerts:
         return
@@ -550,12 +620,23 @@ def send_notifications(conn, alerts: list[dict], notify_config: dict,
     import sys
 
     min_severity = str(notify_config.get('min_severity', 'warning')).lower()
+    
+    # 'off' disables all push notifications
+    if min_severity == 'off':
+        return
+
     include_recovery = str(notify_config.get('include_recovery', 'false')).lower() == 'true'
+    cooldown_minutes = int(notify_config.get('cooldown_minutes', 60))
 
-    # Build list of enabled URLs: skip !-prefixed (disabled) entries
-    urls = [u for u in (webhook_urls or []) if u and not u.startswith('!')]
+    # Parse enabled endpoints: [{service, url, raw}, ...]
+    endpoints = []
+    for entry in (webhook_urls or []):
+        if not entry or entry.startswith('!'):
+            continue
+        service, url = _parse_webhook_entry(entry)
+        endpoints.append({'service': service, 'url': url, 'raw': entry})
 
-    if not urls:
+    if not endpoints:
         return
 
     severity_rank = {'info': 0, 'warning': 1, 'critical': 2}
@@ -565,6 +646,11 @@ def send_notifications(conn, alerts: list[dict], notify_config: dict,
 
     for alert in alerts:
         sev = alert.get('severity', '')
+        atype = alert.get('alert_type', '')
+
+        # Type A/B are dashboard-only log entries, no webhook
+        if atype in ('state_change', 'cumulative_burst'):
+            continue
 
         # Recovery handled separately
         if sev == 'recovery':
@@ -574,31 +660,80 @@ def send_notifications(conn, alerts: list[dict], notify_config: dict,
             if severity_rank.get(sev, -1) < min_rank:
                 continue
 
-        payload = {
-            'title': _format_alert_title(alert),
-            'message': alert.get('message', ''),
-            'severity': sev,
-            'alert_type': alert.get('alert_type', ''),
-            'disk_id': alert.get('disk_id', ''),
-            'host': alert.get('host', ''),
-            'attribute': alert.get('attribute', ''),
-            'old_value': alert.get('old_value', ''),
-            'new_value': alert.get('new_value', ''),
-        }
+        # Cooldown: skip if a webhook was sent for this disk recently
+        if cooldown_minutes > 0:
+            disk_id = alert.get('disk_id', '')
+            ts = alert.get('timestamp', '')
+            try:
+                cutoff = (_dt.fromisoformat(ts.replace('Z', '+00:00'))
+                          - _td(minutes=cooldown_minutes)
+                         ).strftime('%Y-%m-%d %H:%M:%S')
+            except (ValueError, TypeError):
+                cutoff = ts
+            cursor.execute('''
+                SELECT COUNT(*) FROM notification_log nl
+                JOIN alerts a ON nl.alert_id = a.id
+                WHERE a.disk_id = ? AND nl.success = 1
+                  AND nl.timestamp > ?
+            ''', (disk_id, cutoff))
+            if cursor.fetchone()[0] > 0:
+                print(f"  Notification skipped (cooldown {cooldown_minutes}m): [{sev}] {alert.get('message', '')}",
+                      file=sys.stderr)
+                continue
 
-        for url in urls:
+        title = _format_alert_title(alert)
+        message = alert.get('message', '')
+
+        for ep in endpoints:
+            payload = _format_payload(ep['service'], title, message, sev)
+            url = ep['url']
+
+            # ntfy JSON API: POST to base URL with topic in body
+            if ep['service'] == 'ntfy':
+                from urllib.parse import urlparse
+                parsed = urlparse(url)
+                topic = parsed.path.strip('/')
+                if topic:
+                    payload['topic'] = topic
+                    url = f"{parsed.scheme}://{parsed.netloc}/"
+
             success, error = _send_webhook(url, payload)
 
             cursor.execute('''
                 INSERT INTO notification_log (alert_id, timestamp, channel, success, error)
                 VALUES (?, ?, ?, ?, ?)
-            ''', (alert.get('id'), alert.get('timestamp', ''), 'webhook',
+            ''', (alert.get('id'), alert.get('timestamp', ''), ep['url'],
                   int(success), error))
             conn.commit()
 
             status_str = '✓' if success else '✗'
-            print(f"  Notification {status_str}: [{sev}] {alert.get('message', '')} → {url}",
+            print(f"  Notification {status_str}: [{sev}] {alert.get('message', '')} → {ep['url']}",
                   file=sys.stderr)
+
+
+def _parse_webhook_entry(entry: str) -> tuple:
+    """Parse 'service:url' format. Returns (service, url).
+    Entries without prefix default to 'generic'."""
+    for prefix in ('ntfy:', 'gotify:', 'generic:'):
+        if entry.startswith(prefix):
+            return prefix[:-1], entry[len(prefix):]
+        if entry.startswith('!' + prefix):
+            return prefix[:-1], entry[len(prefix) + 1:]
+    return 'generic', entry
+
+
+def _format_payload(service: str, title: str, message: str,
+                    severity: str) -> dict:
+    """Format webhook payload for the given service type."""
+    priority_map = {'critical': 5, 'warning': 3, 'info': 2, 'recovery': 2}
+    pri = priority_map.get(severity, 2)
+
+    if service == 'ntfy':
+        return {'title': title, 'message': message, 'priority': pri}
+    elif service == 'gotify':
+        return {'title': title, 'message': message, 'priority': pri}
+    else:  # generic
+        return {'title': title, 'message': message, 'severity': severity}
 
 
 def _format_alert_title(alert: dict) -> str:
@@ -610,11 +745,15 @@ def _format_alert_title(alert: dict) -> str:
 
     if alert.get('alert_type') == 'smart_status':
         return f"{icon} SMART {alert.get('new_value', '')}"
+    if alert.get('alert_type') == 'disk_status_change':
+        return f"{icon} Disk {alert.get('old_value', '')} → {alert.get('new_value', '')}"
+    if alert.get('alert_type') == 'temperature':
+        return f"{icon} Temperature: {alert.get('new_value', '')}°C"
     return f"{icon} {sev.upper()}: {attr}"
 
 
 def _send_webhook(url: str, payload: dict) -> tuple:
-    """Send notification via HTTP POST.
+    """Send notification via HTTP POST (JSON).
 
     Returns:
         (success: bool, error: str or None)

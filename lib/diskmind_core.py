@@ -777,69 +777,6 @@ def _send_webhook(url: str, payload: dict) -> tuple:
         return (False, str(e))
 
 
-# ---------------------------------------------------------------------------
-# Threshold Loading
-# ---------------------------------------------------------------------------
-
-DEFAULT_PRESET = 'backblaze'
-
-
-def load_thresholds(config_dir) -> dict:
-    """Load active thresholds from config directory.
-
-    Reads config.yaml for preset selection, then loads from
-    thresholds.json (presets) or custom_thresholds.json.
-
-    Args:
-        config_dir: Path to config/ directory
-    """
-    from pathlib import Path
-    config_dir = Path(config_dir)
-
-    # Read preset name from config
-    config_path = config_dir / 'config.yaml'
-    config = {}
-    if config_path.exists():
-        try:
-            config = parse_simple_yaml(config_path.read_text())
-        except IOError:
-            pass
-    preset_name = config.get('threshold_preset', DEFAULT_PRESET)
-
-    # Custom preset: load from custom_thresholds.json
-    if preset_name == 'custom':
-        custom_path = config_dir / 'custom_thresholds.json'
-        if custom_path.exists():
-            try:
-                custom = json.loads(custom_path.read_text())
-                return {'ata': custom.get('ata', {}), 'nvme': custom.get('nvme', {})}
-            except (json.JSONDecodeError, IOError):
-                pass
-
-    # Load presets from thresholds.json
-    presets = {}
-    thresholds_path = config_dir / 'thresholds.json'
-    if thresholds_path.exists():
-        try:
-            data = json.loads(thresholds_path.read_text())
-            presets = data.get('presets', {})
-        except (json.JSONDecodeError, IOError):
-            pass
-
-    # Resolve preset
-    for name in (preset_name, DEFAULT_PRESET):
-        if name in presets:
-            p = presets[name]
-            return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
-
-    # Last resort: first available preset
-    if presets:
-        p = next(iter(presets.values()))
-        return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
-
-    return {}
-
-
 def parse_simple_yaml(text: str) -> dict:
     """Parse simple YAML (flat keys, string values, simple lists, one level of nesting).
 

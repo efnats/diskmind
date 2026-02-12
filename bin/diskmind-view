@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
                           get_disk_issues, check_threshold, decode_seagate_value,
                           generate_alerts, send_notifications, _send_webhook,
-                          _format_payload,
+                          _format_payload, load_thresholds_from_dir,
+                          DEFAULT_PRESET,
                           CUMULATIVE_EVENT_ATTRS, CRITICAL_STATE_ATTRS)
 
 from collections import defaultdict
@@ -37,6 +38,7 @@ from collections import defaultdict
 # ---------------------------------------------------------------------------
 
 _rate_limit_requests = defaultdict(list)
+_rate_limit_lock = threading.Lock()
 
 def check_rate_limit(ip: str) -> bool:
     """Return True if request is allowed, False if rate limited."""
@@ -50,12 +52,13 @@ def check_rate_limit(ip: str) -> bool:
         return True
     
     now = time.time()
-    # Remove timestamps outside the window
-    _rate_limit_requests[ip] = [t for t in _rate_limit_requests[ip] if now - t < window_seconds]
-    # Check limit
-    if len(_rate_limit_requests[ip]) >= max_requests:
-        return False
-    _rate_limit_requests[ip].append(now)
+    with _rate_limit_lock:
+        # Remove timestamps outside the window
+        _rate_limit_requests[ip] = [t for t in _rate_limit_requests[ip] if now - t < window_seconds]
+        # Check limit
+        if len(_rate_limit_requests[ip]) >= max_requests:
+            return False
+        _rate_limit_requests[ip].append(now)
     return True
 
 # ---------------------------------------------------------------------------
@@ -162,7 +165,7 @@ def get_trends(db_path: str, days: int = 30) -> dict:
         if isinstance(attrs, str):
             try:
                 attrs = json.loads(attrs)
-            except:
+            except Exception:
                 attrs = {}
         
         realloc = int(attrs.get('Reallocated_Sector_Ct', 0) or 0)
@@ -219,7 +222,7 @@ def get_disk_history(db_path: str, disk_id: str = None, days: int = 30) -> dict:
         if isinstance(attrs, str):
             try:
                 attrs = json.loads(attrs)
-            except:
+            except Exception:
                 attrs = {}
 
         for attr_name, value in attrs.items():
@@ -380,8 +383,6 @@ def get_stats(readings: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Threshold-based Health Classification
 # ---------------------------------------------------------------------------
-
-DEFAULT_PRESET = 'backblaze'
 
 def _find_thresholds_file() -> Path | None:
     """Locate config/thresholds.json."""
@@ -551,50 +552,9 @@ def load_all_presets() -> dict:
 
 
 def load_thresholds() -> dict:
-    """Load active thresholds: config preset selection → resolve from presets or custom."""
-    config = load_config()
-    preset_name = config.get('threshold_preset', DEFAULT_PRESET)
-    
-    # If custom preset, load from config/custom_thresholds.json
-    if preset_name == 'custom':
-        custom_path = _get_config_path().parent / 'custom_thresholds.json'
-        if custom_path.exists():
-            try:
-                with open(custom_path) as f:
-                    custom = json.load(f)
-                return {
-                    'ata': custom.get('ata', {}),
-                    'nvme': custom.get('nvme', {}),
-                }
-            except (json.JSONDecodeError, IOError):
-                pass
-    
-    presets = load_all_presets()
-    
-    # If preset exists, return its ata/nvme rules
-    if preset_name in presets:
-        preset = presets[preset_name]
-        return {
-            'ata': preset.get('ata', {}),
-            'nvme': preset.get('nvme', {}),
-        }
-    
-    # Fallback: try 'backblaze', then first available preset
-    if DEFAULT_PRESET in presets:
-        preset = presets[DEFAULT_PRESET]
-        return {
-            'ata': preset.get('ata', {}),
-            'nvme': preset.get('nvme', {}),
-        }
-    
-    if presets:
-        first = next(iter(presets.values()))
-        return {
-            'ata': first.get('ata', {}),
-            'nvme': first.get('nvme', {}),
-        }
-    
-    return {}
+    """Load active thresholds: delegates to core library."""
+    config_dir = _get_config_path().parent
+    return load_thresholds_from_dir(config_dir)
 
 
 def save_custom_thresholds(thresholds: dict):
@@ -738,7 +698,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     if r.get('smart_attributes'):
                         try:
                             r['smart_attributes'] = json.loads(r['smart_attributes'])
-                        except:
+                        except Exception:
                             r['smart_attributes'] = {}
                     else:
                         r['smart_attributes'] = {}

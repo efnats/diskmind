@@ -171,7 +171,7 @@ def get_disk_issues(r: dict, thresholds: dict, history: dict = None,
             if check_threshold(check_val, rule):
                 if should_show_attr(attr_name):
                     display = rule.get('display', attr_name)
-                    issues.append({'level': 'critical', 'text': f'{check_val} {display}'})
+                    issues.append({'level': 'critical', 'attr': attr_name, 'text': f'{check_val} {display}'})
 
     # Check warning thresholds (skip if already critical for same attribute)
     critical_attrs = set(rules.get('critical', {}).keys())
@@ -190,7 +190,7 @@ def get_disk_issues(r: dict, thresholds: dict, history: dict = None,
             if check_threshold(check_val, rule):
                 if should_show_attr(attr_name):
                     display = rule.get('display', attr_name)
-                    issues.append({'level': 'warning', 'text': f'{check_val} {display}'})
+                    issues.append({'level': 'warning', 'attr': attr_name, 'text': f'{check_val} {display}'})
 
     return issues
 
@@ -224,7 +224,7 @@ def load_thresholds_from_dir(config_dir) -> dict:
     """Load active thresholds from a config directory.
 
     Reads config.yaml for preset selection, then resolves from
-    thresholds.json (presets) or custom_thresholds.json.
+    thresholds.json (shipped defaults) merged with custom_thresholds.json (user overrides).
 
     Args:
         config_dir: Path to config/ directory (str or Path)
@@ -245,36 +245,59 @@ def load_thresholds_from_dir(config_dir) -> dict:
             pass
     preset_name = config.get('threshold_preset', DEFAULT_PRESET)
 
-    # Custom preset
-    if preset_name == 'custom':
-        custom_path = config_dir / 'custom_thresholds.json'
-        if custom_path.exists():
-            try:
-                custom = json.loads(custom_path.read_text())
-                return {'ata': custom.get('ata', {}), 'nvme': custom.get('nvme', {})}
-            except (json.JSONDecodeError, IOError):
-                pass
+    return load_preset_thresholds(config_dir, preset_name)
 
-    # Load presets
-    presets = {}
+
+def load_preset_thresholds(config_dir, preset_name: str) -> dict:
+    """Load thresholds for a specific preset.
+    
+    Merges shipped defaults with user overrides from custom_thresholds.json.
+    
+    Args:
+        config_dir: Path to config/ directory
+        preset_name: Name of preset (relaxed, conservative, backblaze, custom)
+    
+    Returns:
+        Dict with 'ata' and 'nvme' threshold rules.
+    """
+    from pathlib import Path
+    config_dir = Path(config_dir)
+    
+    # Load shipped presets
+    shipped = {}
     thresholds_path = config_dir / 'thresholds.json'
     if thresholds_path.exists():
         try:
             data = json.loads(thresholds_path.read_text())
-            presets = data.get('presets', {})
+            shipped = data.get('presets', {})
         except (json.JSONDecodeError, IOError):
             pass
-
-    for name in (preset_name, DEFAULT_PRESET):
-        if name in presets:
-            p = presets[name]
-            return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
-
-    if presets:
-        p = next(iter(presets.values()))
+    
+    # Load user overrides
+    user_overrides = {}
+    custom_path = config_dir / 'custom_thresholds.json'
+    if custom_path.exists():
+        try:
+            user_overrides = json.loads(custom_path.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    
+    # Check if user has override for this preset
+    if preset_name in user_overrides and user_overrides[preset_name] is not None:
+        override = user_overrides[preset_name]
+        return {'ata': override.get('ata', {}), 'nvme': override.get('nvme', {})}
+    
+    # Fall back to shipped preset
+    if preset_name in shipped:
+        p = shipped[preset_name]
         return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
-
-    return {}
+    
+    # For 'custom' without saved data, or unknown preset, try default
+    if DEFAULT_PRESET in shipped:
+        p = shipped[DEFAULT_PRESET]
+        return {'ata': p.get('ata', {}), 'nvme': p.get('nvme', {})}
+    
+    return {'ata': {}, 'nvme': {}}
 
 
 # ---------------------------------------------------------------------------

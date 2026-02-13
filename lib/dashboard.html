@@ -63,7 +63,7 @@
         .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
         .filter-group-controls > input:not(.search-input) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
         .filter-group-end { margin-left: auto; }
-        .search-input { padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 13px; width: 160px; outline: none; transition: all 0.15s; }
+        .search-input { padding: 6px 10px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: var(--text-primary); font-size: 13px; width: 160px; height: 32px; outline: none; transition: all 0.15s; }
         .search-input::placeholder { color: var(--text-muted); }
         .search-input:hover { border-color: #b0b7c3; }
         .search-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
@@ -73,7 +73,7 @@
         
         /* Custom Dropdown */
         .custom-select { position: relative; min-width: 120px; }
-        .custom-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; cursor: pointer; transition: all 0.15s; user-select: none; }
+        .custom-select-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; height: 32px; cursor: pointer; transition: all 0.15s; user-select: none; }
         .custom-select-trigger:hover { border-color: var(--text-muted); }
         .custom-select.open .custom-select-trigger { border-color: var(--accent); }
         .custom-select-arrow { color: var(--text-muted); transition: transform 0.2s; flex-shrink: 0; }
@@ -199,11 +199,11 @@
         .issue { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 500; margin-right: 4px; }
         .issue.warning { background: rgba(245,158,11,0.1); color: var(--warning); }
         .issue.critical { background: rgba(239,68,68,0.1); color: var(--danger); }
+        .issue-delta { opacity: 0.85; cursor: help; }
         .since-incomplete { color: var(--warning); font-style: italic; cursor: help; }
         .delta-period { font-size: 9px; color: var(--text-muted); font-weight: normal; }
         .data-coverage-info { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 6px; padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--warning); }
         [data-theme="dark"] .data-coverage-info { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.25); }
-        .trend { font-size: 11px; color: var(--warning); }
         .muted { color: var(--text-muted); }
         .mono { font-family: monospace; font-size: 12px; }
         
@@ -290,10 +290,8 @@
         [data-theme="dark"] .settings-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
         [data-theme="dark"] .settings-body::-webkit-scrollbar-thumb:hover { background: rgba(200,200,200,0.35); }
         .settings-section-hint { font-size: 12px; color: #777; margin: 0 0 10px 0; }
-        .settings-divider { height: 1px; background: #e2e5ea; margin: 20px 0; }
-        .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid #e2e5ea; }
-        .settings-body > .settings-row:first-child { padding-top: 4px; }
-        .settings-row:last-child { border-bottom: none; }
+        .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 0; }
+        .settings-row .wh-toggle { margin-right: 6px; }
         .settings-row-label { font-size: 14px; font-weight: 500; color: #333; display: flex; align-items: center; gap: 5px; flex-shrink: 0; white-space: nowrap; }
         .settings-row-label .info-icon, .settings-token-label .info-icon { font-size: 13px; }
         .settings-row .custom-select { min-width: unset; }
@@ -301,7 +299,7 @@
         .settings-row .custom-select-trigger:hover { border-color: var(--border); }
         .settings-row .custom-select.open .custom-select-trigger { border-color: var(--accent); }
         .settings-row .custom-select-options { min-width: 150px; right: 0; left: auto; }
-        .settings-row .info-icon:hover::after, .settings-token-section .info-icon:hover::after { left: -20px; right: auto; transform: none; max-width: 220px; white-space: normal; }
+        .settings-row .info-icon:hover::after, .settings-token-section .info-icon:hover::after, .settings-section-title .info-icon:hover::after { left: -20px; right: auto; transform: none; max-width: 220px; white-space: normal; }
         .settings-token-section { border-top: 1px solid #e2e5ea; margin-top: -1px; }
         .settings-token-label { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 10px; display: flex; align-items: center; gap: 5px; }
         /* Unified input styling */
@@ -349,20 +347,54 @@
         [data-theme="dark"] .wh-toggle .wh-slider { background: #475569; }
         [data-theme="dark"] .wh-toggle input:checked + .wh-slider { background: #3b82f6; }
         .sev-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; position: relative; top: -1px; }
-        .settings-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
-        [data-theme="dark"] .settings-section-title { color: #94a3b8; }
-        .wh-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; }
-        .wh-row:last-child { border-bottom: none; }
-        .wh-row.wh-disabled .wh-url { opacity: 0.4; text-decoration: line-through; }
-        .wh-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
-        .wh-svc-badge { padding: 2px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; flex-shrink: 0; font-family: 'SF Mono', 'Consolas', monospace; user-select: none; transition: all 0.15s; }
-        .wh-svc-badge:hover { border-color: var(--accent); color: var(--accent); }
-        .wh-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-        .wh-action-btn { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 11px; cursor: pointer; font-family: inherit; }
-        .wh-action-btn:hover { border-color: var(--accent); color: var(--accent); }
-        .wh-del-confirm { background: #dc2626 !important; color: #fff !important; border-color: #dc2626 !important; }
-        .wh-status { font-size: 11px; color: var(--text-muted); margin-left: 4px; flex-shrink: 0; }
-        .wh-status.wh-err { color: #ef4444; }
+        .settings-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 12px 0 8px 0; padding-top: 20px; border-top: 1px solid #e2e5ea; }
+        .settings-section-title .info-icon { text-transform: none; letter-spacing: normal; font-size: 13px; }
+        .settings-section-title:first-child { padding-top: 0; border-top: none; }
+        [data-theme="dark"] .settings-section-title { color: #94a3b8; border-top-color: #2a3a52; }
+        
+        /* Endpoint Cards */
+        .endpoint-add-row { display: flex; gap: 8px; margin-bottom: 12px; }
+        .endpoint-service-select { min-width: 100px; flex-shrink: 0; }
+        .endpoint-service-select .custom-select-trigger { padding: 8px 12px; font-size: 13px; background: transparent; border: 1px solid var(--border); border-radius: 6px; }
+        .endpoint-service-select .custom-select-options { min-width: 120px; max-height: none; }
+        .svc-icon { display: inline-flex; width: 14px; height: 14px; margin-right: 6px; vertical-align: middle; }
+        .svc-icon svg { width: 100%; height: 100%; }
+        .endpoint-service-select .custom-select-option { display: flex; align-items: center; }
+        .endpoint-service-select .custom-select-option::before { display: none; }
+        .endpoint-input { flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; background: transparent; color: var(--text-primary); outline: none; }
+        .endpoint-input::placeholder { color: var(--text-muted); }
+        .endpoint-input.showing-service { color: var(--text-muted); }
+        .endpoint-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+        .endpoint-add-btn { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 13px; cursor: pointer; transition: all 0.15s; margin-right: 6px; }
+        .endpoint-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .endpoint-list { display: flex; flex-direction: column; gap: 8px; }
+        .endpoint-card { border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: var(--bg-secondary); }
+        .endpoint-card.disabled { opacity: 0.5; }
+        .endpoint-card.disabled .endpoint-card-url { text-decoration: line-through; color: var(--text-muted); }
+        .endpoint-card.disabled .endpoint-card-url:hover { text-decoration: line-through; }
+        .endpoint-card-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .endpoint-card-icon { width: 20px; height: 20px; flex-shrink: 0; color: var(--text-muted); }
+        .endpoint-card-icon svg { width: 100%; height: 100%; }
+        .endpoint-card-url { flex: 1; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; color: var(--text-primary); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+        .endpoint-card-url:hover { text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 3px; text-decoration-color: var(--text-muted); }
+        .endpoint-card-url-input { flex: 1; font-size: 13px; font-family: 'SF Mono', 'Consolas', monospace; color: var(--text-primary); min-width: 0; padding: 4px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg-primary); outline: none; }
+        .endpoint-card-footer { display: flex; align-items: center; justify-content: space-between; padding-left: 30px; }
+        .endpoint-card-status { font-size: 12px; color: var(--text-muted); }
+        .endpoint-status-ok { color: var(--success); }
+        .endpoint-status-err { color: var(--danger); }
+        .endpoint-status-pending { color: var(--text-muted); font-style: italic; }
+        .endpoint-card-actions { display: flex; align-items: center; gap: 12px; }
+        .endpoint-action-btn { width: 24px; height: 24px; border: none; border-radius: 4px; background: transparent; color: var(--text-muted); font-size: 14px; cursor: pointer; transition: all 0.15s; display: flex; align-items: center; justify-content: center; }
+        .endpoint-action-btn:hover { color: var(--accent); background: var(--bg-hover); }
+        .endpoint-del-btn:hover { color: var(--danger); }
+        .endpoint-del-confirm { color: #fff !important; background: var(--danger) !important; }
+        .endpoint-status { font-size: 12px; text-align: center; min-height: 18px; margin-top: 8px; color: var(--text-muted); }
+        [data-theme="dark"] .endpoint-input { border-color: #2a3a52; }
+        [data-theme="dark"] .endpoint-input:focus { border-color: var(--accent); }
+        [data-theme="dark"] .endpoint-card { background: #1a2538; border-color: #2a3a52; }
+        [data-theme="dark"] .endpoint-service-select .custom-select-trigger { border-color: #2a3a52; }
+        [data-theme="dark"] .endpoint-action-btn:hover { background: rgba(255,255,255,0.05); }
+        
         .host-meta { font-size: 11px; color: #888; font-family: inherit; white-space: nowrap; }
         .host-status { font-size: 10px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
         .host-new { background: #e0f2fe; color: #0284c7; }
@@ -453,8 +485,6 @@
         [data-theme="dark"] .alerts-body:hover { scrollbar-color: rgba(200,200,200,0.2) transparent; }
         [data-theme="dark"] .alerts-body:hover::-webkit-scrollbar-thumb { background: rgba(200,200,200,0.2); }
         [data-theme="dark"] .settings-section-hint { color: #64748b; }
-        [data-theme="dark"] .settings-divider { background: #2a3a52; }
-        [data-theme="dark"] .settings-row { border-bottom-color: #2a3a52; }
         [data-theme="dark"] .settings-row-label { color: #e2e8f0; }
         [data-theme="dark"] .settings-token-label { color: #e2e8f0; }
         [data-theme="dark"] .settings-token-section { border-top-color: #2a3a52; }
@@ -473,11 +503,6 @@
         .threshold-content .preset-btn:hover { border-color: #9ca3af; }
         .threshold-content .preset-btn.active { border-color: #3b82f6; background: #eff6ff; color: #3b82f6; }
         .threshold-content .preset-hint { font-size: 12px; color: #6b7280; margin: 0 0 16px 0; }
-        .threshold-content .copy-from { display: none; align-items: center; gap: 8px; margin: -8px 0 16px 0; font-size: 12px; color: #6b7280; }
-        .threshold-content .copy-from.visible { display: flex; }
-        .threshold-content .copy-from-label { white-space: nowrap; }
-        .threshold-content .copy-from-btn { padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: all 0.15s; }
-        .threshold-content .copy-from-btn:hover { border-color: var(--accent); color: var(--accent); }
         .threshold-content .threshold-section { margin-bottom: 20px; }
         .threshold-content .threshold-section:last-child { margin-bottom: 0; }
         .threshold-content .threshold-section-title { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin-bottom: 8px; }
@@ -505,6 +530,11 @@
         .threshold-content .threshold-input input:disabled { opacity: 0.4; cursor: not-allowed; }
         .threshold-content .threshold-input input:disabled:hover { border-color: #d5d9e0; }
         .threshold-content .threshold-input .unit { font-size: 12px; color: #9ca3af; }
+        .threshold-content .threshold-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+        .threshold-content .threshold-reset-btn { padding: 8px 16px; border: 1px solid #d5d9e0; border-radius: 6px; background: transparent; color: #6b7280; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+        .threshold-content .threshold-reset-btn:hover { border-color: #ef4444; color: #ef4444; }
+        .threshold-content .threshold-status { font-size: 12px; color: #10b981; }
+        .threshold-content .preset-btn.modified::after { content: '•'; margin-left: 4px; color: var(--warning); }
         [data-theme="dark"] .threshold-content .preset-btn { background: #141c2b; border-color: #2a3a52; color: #e2e8f0; }
         [data-theme="dark"] .threshold-content .preset-btn:hover { border-color: #4a5568; }
         [data-theme="dark"] .threshold-content .preset-btn.active { background: rgba(59,130,246,0.15); border-color: #3b82f6; }
@@ -521,6 +551,9 @@
         [data-theme="dark"] .threshold-content .threshold-input input:focus { border-color: #3b82f6; }
         [data-theme="dark"] .threshold-content .threshold-input input:disabled:hover { border-color: #2a3a52; }
         [data-theme="dark"] .threshold-content .threshold-input .unit { color: #64748b; }
+        [data-theme="dark"] .threshold-content .threshold-actions { border-color: #2a3a52; }
+        [data-theme="dark"] .threshold-content .threshold-reset-btn { border-color: #2a3a52; color: #94a3b8; }
+        [data-theme="dark"] .threshold-content .threshold-reset-btn:hover { border-color: #ef4444; color: #ef4444; }
         
         @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
     </style>
@@ -578,7 +611,7 @@
         
         <div class="filters">
             <div class="filter-group-labeled">
-                <span class="filter-group-label">Disks</span>
+                <span class="filter-group-label">Type</span>
                 <div class="filter-group-controls">
                     <div class="custom-select" id="typeFilterWrapper">
                         <div class="custom-select-trigger" onclick="toggleDropdown('typeFilterWrapper')">
@@ -786,7 +819,7 @@
                     </div>
                     
                     <div class="settings-token-section">
-                        <div class="settings-row" style="border-bottom: none; padding-bottom: 10px;">
+                        <div class="settings-row">
                             <span class="settings-row-label">Push token <span class="info-icon" data-tip="Shared secret for authenticating push agents. Leave empty to allow unauthenticated push.">ⓘ</span></span>
                             <input type="password" id="pushTokenInput" class="token-inline-input" placeholder="Not set" onblur="savePushToken()" onkeydown="if(event.key==='Enter'){this.blur()}">
                         </div>
@@ -811,18 +844,12 @@
                 <div class="settings-tab-content" id="tabThresholds">
                     <div class="threshold-content">
                         <div class="preset-buttons">
-                            <button class="preset-btn" data-preset="relaxed" onclick="selectPreset('relaxed')">Relaxed</button>
-                            <button class="preset-btn" data-preset="conservative" onclick="selectPreset('conservative')">Conservative</button>
-                            <button class="preset-btn" data-preset="backblaze" onclick="selectPreset('backblaze')">Backblaze</button>
-                            <button class="preset-btn" data-preset="custom" onclick="selectPreset('custom')">Custom</button>
+                            <button class="preset-btn" data-preset="relaxed" onclick="selectEditorPreset('relaxed')">Relaxed</button>
+                            <button class="preset-btn" data-preset="conservative" onclick="selectEditorPreset('conservative')">Conservative</button>
+                            <button class="preset-btn" data-preset="backblaze" onclick="selectEditorPreset('backblaze')">Backblaze</button>
+                            <button class="preset-btn" data-preset="custom" onclick="selectEditorPreset('custom')">Custom</button>
                         </div>
                         <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
-                        <div class="copy-from" id="copyFromRow">
-                            <span class="copy-from-label">Copy from:</span>
-                            <button class="copy-from-btn" onclick="copyFromPreset('relaxed')">Relaxed</button>
-                            <button class="copy-from-btn" onclick="copyFromPreset('conservative')">Conservative</button>
-                            <button class="copy-from-btn" onclick="copyFromPreset('backblaze')">Backblaze</button>
-                        </div>
                         
                         <div class="threshold-section">
                             <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
@@ -839,11 +866,54 @@
                                 <tbody></tbody>
                             </table>
                         </div>
+                        
+                        <div class="threshold-actions" id="thresholdActions">
+                            <button class="threshold-reset-btn" id="resetPresetBtn" onclick="resetPresetToDefaults()" style="display:none;">Reset to defaults</button>
+                            <span class="threshold-status" id="thresholdStatus"></span>
+                        </div>
                     </div>
                 </div>
                 
                 <!-- Notifications Tab -->
                 <div class="settings-tab-content" id="tabNotifications">
+                    <div class="settings-section-title">Detection</div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">Threshold <span class="info-icon" data-tip="Threshold profile for alert detection. Independent from dashboard view.">ⓘ</span></span>
+                        <div class="custom-select" id="alertThresholdWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('alertThresholdWrapper')">
+                                <span class="custom-select-value">Backblaze</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="relaxed">Relaxed</div>
+                                <div class="custom-select-option" data-value="conservative">Conservative</div>
+                                <div class="custom-select-option selected" data-value="backblaze">Backblaze</div>
+                                <div class="custom-select-option" data-value="custom">Custom</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="alertThresholdPreset" value="backblaze">
+                    </div>
+                    
+                    <div class="settings-row">
+                        <span class="settings-row-label">History <span class="info-icon" data-tip="Time range for detecting changes in cumulative counters (e.g. reallocated sectors).">ⓘ</span></span>
+                        <div class="custom-select" id="alertHistoryWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('alertHistoryWrapper')">
+                                <span class="custom-select-value">7 days</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option" data-value="1h">1 hour</div>
+                                <div class="custom-select-option" data-value="24h">24 hours</div>
+                                <div class="custom-select-option selected" data-value="7d">7 days</div>
+                                <div class="custom-select-option" data-value="30d">30 days</div>
+                                <div class="custom-select-option" data-value="90d">90 days</div>
+                                <div class="custom-select-option" data-value="all">all time</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="alertHistory" value="7d">
+                    </div>
+                    
                     <div class="settings-section-title">Local</div>
                     
                     <div class="settings-row">
@@ -863,7 +933,7 @@
                         <input type="hidden" id="alertSoundLevel" value="off">
                     </div>
                     
-                    <div class="settings-row" style="border-bottom: none;">
+                    <div class="settings-row">
                         <span class="settings-row-label">Keep alerts</span>
                         <div class="custom-select" id="alertRetentionWrapper">
                             <div class="custom-select-trigger" onclick="toggleDropdown('alertRetentionWrapper')">
@@ -883,7 +953,7 @@
                         <input type="hidden" id="alertRetentionDays" value="14">
                     </div>
                     
-                    <div class="settings-section-title" style="margin-top: 28px;">Push</div>
+                    <div class="settings-section-title">Push</div>
                     
                     <div class="settings-row">
                         <span class="settings-row-label">Severity</span>
@@ -903,7 +973,7 @@
                     </div>
                     
                     <div class="settings-row">
-                        <span class="settings-row-label">Quiet period</span>
+                        <span class="settings-row-label">Quiet period <span class="info-icon" data-tip="Minimum time between repeated alerts for the same issue. Prevents notification spam.">ⓘ</span></span>
                         <div class="custom-select" id="notifyCooldownWrapper">
                             <div class="custom-select-trigger" onclick="toggleDropdown('notifyCooldownWrapper')">
                                 <span class="custom-select-value">1 hour</span>
@@ -923,19 +993,26 @@
                     </div>
                     
                     <div class="settings-row">
-                        <span class="settings-row-label">Recovery</span>
+                        <span class="settings-row-label">Recovery <span class="info-icon" data-tip="Send notification when disk status improves (e.g. warning → ok).">ⓘ</span></span>
                         <label class="wh-toggle"><input type="checkbox" id="notifyRecoveryToggle" onchange="saveNotifySettings()"><span class="wh-slider"></span></label>
                     </div>
                     
-                    <div style="padding: 14px 0 4px;">
-                        <span class="settings-row-label">Endpoints <span class="info-icon" data-tip="Each URL receives alerts as HTTP POST (JSON). Works with ntfy, Gotify, Slack, Discord, etc.">ⓘ</span></span>
-                        <div id="webhookUrlsList" style="padding-top: 4px;"></div>
-                        <div style="display: flex; align-items: center; gap: 8px; padding-top: 6px;">
-                            <input type="text" id="webhookUrlInput" class="host-input" placeholder="https://ntfy.example.com/diskmind" onkeydown="if(event.key==='Enter'){addWebhookUrl()}">
-                            <button class="wh-action-btn" style="padding: 5px 10px; font-size: 12px;" onclick="addWebhookUrl()">Add</button>
+                    <div class="settings-section-title">Endpoints <span class="info-icon" data-tip="Destinations for alert notifications. Add services like ntfy, Slack, Discord, or email.">ⓘ</span></div>
+                    
+                    <div class="endpoint-add-row">
+                        <div class="custom-select endpoint-service-select" id="endpointServiceWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('endpointServiceWrapper')">
+                                <span class="custom-select-value"><span class="svc-icon"></span>ntfy</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options" id="endpointServiceOptions"></div>
                         </div>
-                        <div id="notifyStatus" style="font-size: 12px; padding-top: 6px; text-align: center; min-height: 18px;"></div>
+                        <input type="text" id="webhookUrlInput" class="endpoint-input showing-service" value="ntfy" placeholder="https://ntfy.sh/your-topic" onfocus="onEndpointInputFocus()" onkeydown="if(event.key==='Enter'){addWebhookUrl()}">
+                        <button class="endpoint-add-btn" onclick="addWebhookUrl()">Add</button>
                     </div>
+                    
+                    <div id="webhookUrlsList" class="endpoint-list"></div>
+                    <div id="notifyStatus" class="endpoint-status"></div>
                 </div>
             </div>
         </div>
@@ -1208,10 +1285,13 @@
                 else if (wrapper.id === 'tempUnitWrapper') callback = () => saveTempUnit();
                 else if (wrapper.id === 'refreshIntervalWrapper') callback = () => saveRefreshInterval();
                 else if (wrapper.id === 'retentionWrapper') callback = () => saveRetention();
+                else if (wrapper.id === 'alertThresholdWrapper') callback = () => saveNotifySettings();
+                else if (wrapper.id === 'alertHistoryWrapper') callback = () => saveNotifySettings();
                 else if (wrapper.id === 'notifyMinSeverityWrapper') callback = () => saveNotifySettings();
                 else if (wrapper.id === 'notifyCooldownWrapper') callback = () => saveNotifySettings();
                 else if (wrapper.id === 'alertRetentionWrapper') callback = () => savePanelSettings();
                 else if (wrapper.id === 'alertSoundWrapper') callback = () => savePanelSettings();
+                else if (wrapper.id === 'endpointServiceWrapper') callback = (v) => selectEndpointService(v);
                 
                 selectOption(wrapper.id, value, label, callback);
             });
@@ -1727,7 +1807,6 @@
         const hoursFmt = fmtHours(hours);
         let tempRaw = getTemp(attrs);
         let temp = formatTemp(tempRaw);
-        const trend = data.trends[diskId]?.delta > 0 ? '<span class="trend">▲</span>' : '';
 
         // Calculate data availability (time since first reading)
         const hMeta = hist || {};
@@ -1758,7 +1837,14 @@
         let issues = '';
         if (d.issues && d.issues.length > 0) {
             for (const issue of d.issues) {
-                issues += `<span class="issue ${issue.level}">${issue.text}</span>`;
+                let deltaStr = '';
+                if (issue.attr && hist && hist[issue.attr]) {
+                    const delta = hist[issue.attr].delta || 0;
+                    if (delta > 0) {
+                        deltaStr = ` <span class="issue-delta" title="+${delta} in selected period">(+${delta})</span>`;
+                    }
+                }
+                issues += `<span class="issue ${issue.level}">${issue.text}${deltaStr}</span>`;
             }
         }
 
@@ -1856,7 +1942,7 @@
             <td>${d.model || '-'}</td>
             <td class="mono muted">${d.serial}</td>
             <td>${capacity}</td>
-            <td class="mono">${hoursFmt}${trend}</td>
+            <td class="mono">${hoursFmt}</td>
             <td>${temp !== '-' ? temp + '°' : '-'}</td>
             <td class="${sinceClass}"${sinceTooltip ? ` title="${sinceTooltip}"` : ''}>${sinceText}</td>
             <td>${lastText}</td>
@@ -2920,8 +3006,6 @@
     async function changePreset(name) {
         // Immediately update UI
         document.getElementById('presetFilter').value = name;
-        currentThresholdPreset = name;
-        updatePresetButtons();
         
         await setPreset(name);
     }
@@ -2962,7 +3046,6 @@
     };
     
     let thresholdPresets = {};
-    let currentThresholdPreset = 'backblaze';
     
     function toggleThresholdEditor() {
         // Open settings panel with thresholds tab
@@ -3035,13 +3118,23 @@
     let webhookUrls = [];  // [{url, enabled, service}, ...]
     let webhookStatus = {};  // {url: {success, error, timestamp}}
     
-    const WH_SERVICES = ['ntfy', 'gotify', 'generic'];
+    const WH_SERVICES = {
+        ntfy: { label: 'ntfy', placeholder: 'https://ntfy.sh/your-topic', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>' },
+        gotify: { label: 'Gotify', placeholder: 'https://gotify.example.com/message?token=...', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>' },
+        discord: { label: 'Discord', placeholder: 'https://discord.com/api/webhooks/...', icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>' },
+        slack: { label: 'Slack', placeholder: 'https://hooks.slack.com/services/...', icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313zM8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312zM18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312zM15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/></svg>' },
+        pushover: { label: 'Pushover', placeholder: 'https://api.pushover.net/1/messages.json', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>' },
+        telegram: { label: 'Telegram', placeholder: 'https://api.telegram.org/bot.../sendMessage', icon: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>' },
+        generic: { label: 'Generic', placeholder: 'https://example.com/webhook', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>' },
+    };
+    const WH_SERVICE_KEYS = Object.keys(WH_SERVICES);
+    let selectedEndpointService = 'ntfy';
     
     function parseWebhookUrls(raw) {
         return (raw || []).map(s => {
             let enabled = true;
             if (s.startsWith('!')) { enabled = false; s = s.slice(1); }
-            for (const svc of WH_SERVICES) {
+            for (const svc of WH_SERVICE_KEYS) {
                 if (s.startsWith(svc + ':')) {
                     return { url: s.slice(svc.length + 1), enabled, service: svc };
                 }
@@ -3054,6 +3147,10 @@
         const lower = url.toLowerCase();
         if (lower.includes('ntfy')) return 'ntfy';
         if (lower.includes('gotify')) return 'gotify';
+        if (lower.includes('discord.com/api/webhooks')) return 'discord';
+        if (lower.includes('hooks.slack.com')) return 'slack';
+        if (lower.includes('pushover.net')) return 'pushover';
+        if (lower.includes('api.telegram.org')) return 'telegram';
         return 'generic';
     }
     
@@ -3068,6 +3165,10 @@
         if (!settingsData) return;
         loadPanelSettings();
         const n = settingsData.notifications || {};
+        // Alert thresholds/history for notifications
+        setDropdownValue('alertThresholdWrapper', n.threshold_preset || 'backblaze');
+        setDropdownValue('alertHistoryWrapper', n.history || '7d');
+        // Push settings
         setDropdownValue('notifyMinSeverityWrapper', n.min_severity || 'warning');
         document.getElementById('notifyRecoveryToggle').checked = String(n.include_recovery || 'false').toLowerCase() === 'true';
         setDropdownValue('notifyCooldownWrapper', String(n.cooldown_minutes || 60));
@@ -3098,6 +3199,8 @@
     async function saveNotifySettings() {
         const payload = {
             notifications: {
+                threshold_preset: document.getElementById('alertThresholdPreset').value,
+                history: document.getElementById('alertHistory').value,
                 min_severity: document.getElementById('notifyMinSeveritySelect').value,
                 include_recovery: document.getElementById('notifyRecoveryToggle').checked,
                 cooldown_minutes: parseInt(document.getElementById('notifyCooldown').value) || 60,
@@ -3146,23 +3249,29 @@
             let statusHtml = '';
             if (st) {
                 if (st.success) {
-                    statusHtml = `<span class="wh-status">· ${formatTimeAgo(st.timestamp)} ✓</span>`;
+                    statusHtml = `<span class="endpoint-status-ok">✓ ${formatTimeAgo(st.timestamp)}</span>`;
                 } else {
-                    const errText = st.error ? ` — ${escapeHtml(st.error).substring(0, 30)}` : '';
-                    statusHtml = `<span class="wh-status wh-err">· ${formatTimeAgo(st.timestamp)} ✗${errText}</span>`;
+                    const errText = st.error ? ` — ${escapeHtml(st.error).substring(0, 20)}` : '';
+                    statusHtml = `<span class="endpoint-status-err">✗ ${formatTimeAgo(st.timestamp)}${errText}</span>`;
                 }
             }
             const displayUrl = w.url.replace(/^https?:\/\//, '');
             const svc = w.service || 'generic';
-            return `<div class="wh-row${w.enabled ? '' : ' wh-disabled'}">
-                <span class="wh-svc-badge" onclick="cycleWebhookService(${i})" title="Click to change">${svc}</span>
-                <span class="wh-url" title="${escapeHtml(w.url)}">${escapeHtml(displayUrl)}</span>
-                ${statusHtml}
-                <span class="wh-actions">
-                    <button class="wh-action-btn" onclick="testWebhookUrl(${i})">Test</button>
-                    <button class="wh-action-btn wh-del-btn" data-idx="${i}" onclick="confirmRemoveWebhookUrl(this,${i})">✕</button>
+            const svcData = WH_SERVICES[svc] || { label: svc, icon: '' };
+            return `<div class="endpoint-card${w.enabled ? '' : ' disabled'}">
+                <div class="endpoint-card-header">
+                    <span class="endpoint-card-icon">${svcData.icon}</span>
+                    <span class="endpoint-card-url" data-idx="${i}" onclick="startEditUrl(this, ${i})" title="Click to edit">${escapeHtml(displayUrl)}</span>
+                    <input type="text" class="endpoint-card-url-input" value="${escapeHtml(w.url)}" data-idx="${i}" onblur="finishEditUrl(${i}, this)" onkeydown="if(event.key==='Enter'){this.blur()}else if(event.key==='Escape'){cancelEditUrl(this)}" style="display:none" />
                     <label class="wh-toggle"><input type="checkbox" ${w.enabled ? 'checked' : ''} onchange="toggleWebhookUrl(${i})"><span class="wh-slider"></span></label>
-                </span>
+                </div>
+                <div class="endpoint-card-footer">
+                    <span class="endpoint-card-status">${statusHtml || '<span class="endpoint-status-pending">Not tested</span>'}</span>
+                    <div class="endpoint-card-actions">
+                        <button class="endpoint-action-btn" onclick="testWebhookUrl(${i})" title="Test">▶</button>
+                        <button class="endpoint-action-btn endpoint-del-btn" data-idx="${i}" onclick="confirmRemoveWebhookUrl(this,${i})" title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                    </div>
+                </div>
             </div>`;
         }).join('');
     }
@@ -3173,13 +3282,13 @@
             return;
         }
         btn.dataset.confirm = '1';
-        btn.textContent = '?';
-        btn.classList.add('wh-del-confirm');
+        btn.innerHTML = '?';
+        btn.classList.add('endpoint-del-confirm');
         setTimeout(() => {
             if (btn.parentNode) {
                 btn.dataset.confirm = '';
-                btn.textContent = '✕';
-                btn.classList.remove('wh-del-confirm');
+                btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+                btn.classList.remove('endpoint-del-confirm');
             }
         }, 2000);
     }
@@ -3189,15 +3298,55 @@
         const url = input.value.trim();
         if (!url) return;
         if (webhookUrls.some(w => w.url === url)) { input.value = ''; return; }
-        webhookUrls.push({ url, enabled: true, service: _detectService(url) });
+        webhookUrls.push({ url, enabled: true, service: selectedEndpointService });
         input.value = '';
         renderWebhookUrls();
         await saveWebhookUrls();
     }
     
+    function selectEndpointService(service) {
+        selectedEndpointService = service;
+        const input = document.getElementById('webhookUrlInput');
+        const svcData = WH_SERVICES[service] || {};
+        input.placeholder = svcData.placeholder || '';
+        input.value = svcData.label || service;
+        input.classList.add('showing-service');
+        // Update dropdown display with icon
+        const trigger = document.querySelector('#endpointServiceWrapper .custom-select-value');
+        if (trigger) trigger.innerHTML = `<span class="svc-icon">${svcData.icon || ''}</span>${svcData.label || service}`;
+        // Update selected state
+        document.querySelectorAll('#endpointServiceWrapper .custom-select-option').forEach(opt => {
+            opt.classList.toggle('selected', opt.dataset.value === service);
+        });
+        document.getElementById('endpointServiceWrapper').classList.remove('open');
+    }
+    
+    function onEndpointInputFocus() {
+        const input = document.getElementById('webhookUrlInput');
+        const svcData = WH_SERVICES[selectedEndpointService] || {};
+        if (input.value === svcData.label || input.value === selectedEndpointService) {
+            input.value = '';
+        }
+        input.classList.remove('showing-service');
+    }
+    
+    function initEndpointServiceDropdown() {
+        const container = document.getElementById('endpointServiceOptions');
+        if (!container) return;
+        container.innerHTML = WH_SERVICE_KEYS.map(key => {
+            const svc = WH_SERVICES[key];
+            const selected = key === 'ntfy' ? ' selected' : '';
+            return `<div class="custom-select-option${selected}" data-value="${key}"><span class="svc-icon">${svc.icon}</span>${svc.label}</div>`;
+        }).join('');
+        // Set initial trigger display
+        const trigger = document.querySelector('#endpointServiceWrapper .custom-select-value');
+        if (trigger) trigger.innerHTML = `<span class="svc-icon">${WH_SERVICES.ntfy.icon}</span>ntfy`;
+    }
+    
     async function cycleWebhookService(index) {
         const current = webhookUrls[index].service || 'generic';
-        const next = WH_SERVICES[(WH_SERVICES.indexOf(current) + 1) % WH_SERVICES.length];
+        const idx = WH_SERVICE_KEYS.indexOf(current);
+        const next = WH_SERVICE_KEYS[(idx + 1) % WH_SERVICE_KEYS.length];
         webhookUrls[index].service = next;
         renderWebhookUrls();
         await saveWebhookUrls();
@@ -3213,6 +3362,45 @@
         webhookUrls[index].enabled = !webhookUrls[index].enabled;
         renderWebhookUrls();
         await saveWebhookUrls();
+    }
+    
+    async function updateWebhookUrl(index, newUrl) {
+        newUrl = newUrl.trim();
+        if (!newUrl || newUrl === webhookUrls[index].url) return;
+        // Check for duplicates
+        if (webhookUrls.some((w, i) => i !== index && w.url === newUrl)) {
+            renderWebhookUrls(); // Reset to original
+            return;
+        }
+        webhookUrls[index].url = newUrl;
+        // Auto-detect service from new URL
+        webhookUrls[index].service = _detectService(newUrl);
+        // Clear old status since URL changed
+        delete webhookStatus[newUrl];
+        renderWebhookUrls();
+        await saveWebhookUrls();
+    }
+    
+    function startEditUrl(span, index) {
+        const input = span.nextElementSibling;
+        span.style.display = 'none';
+        input.style.display = '';
+        input.focus();
+        input.select();
+    }
+    
+    function finishEditUrl(index, input) {
+        const newUrl = input.value.trim();
+        input.style.display = 'none';
+        input.previousElementSibling.style.display = '';
+        if (newUrl && newUrl !== webhookUrls[index].url) {
+            updateWebhookUrl(index, newUrl);
+        }
+    }
+    
+    function cancelEditUrl(input) {
+        input.value = webhookUrls[input.dataset.idx].url;
+        input.blur();
     }
     
     async function testWebhookUrl(index) {
@@ -3250,20 +3438,34 @@
         if (!settingsData) return;
         
         thresholdPresets = settingsData.all_presets || {};
-        currentThresholdPreset = settingsData.active_preset || 'backblaze';
         
-        // Get thresholds to display
-        const current = settingsData.thresholds || {};
+        // Editor starts with the currently active preset
+        currentEditorPreset = currentEditorPreset || settingsData.active_preset || 'backblaze';
         
-        // Render tables
-        const isCustom = currentThresholdPreset === 'custom';
-        renderThresholdTable('ata', current.ata || {}, isCustom);
-        renderThresholdTable('nvme', current.nvme || {}, isCustom);
+        // Load the preset data (user override if exists, else shipped)
+        const presetData = getEditorPresetData(currentEditorPreset);
+        
+        // Render tables (always editable now)
+        renderThresholdTable('ata', presetData.ata || {}, true);
+        renderThresholdTable('nvme', presetData.nvme || {}, true);
         
         // Update UI
-        updatePresetButtons();
-        updatePresetHint();
+        updateEditorPresetButtons();
+        updateEditorHint();
+        updateResetButton();
     }
+    
+    function getEditorPresetData(presetName) {
+        // Check for user override first
+        const userOverrides = settingsData.user_overrides || {};
+        if (presetName in userOverrides && userOverrides[presetName] !== null) {
+            return userOverrides[presetName];
+        }
+        // Fall back to shipped preset
+        return thresholdPresets[presetName] || {};
+    }
+    
+    let currentEditorPreset = null;  // Which preset we're editing
     
     function renderThresholdTable(type, thresholds, editable) {
         const tbody = document.querySelector(`#${type}Thresholds tbody`);
@@ -3368,56 +3570,46 @@
     function onThresholdChange() {
         // Save after short delay
         clearTimeout(window._thresholdSaveTimeout);
-        window._thresholdSaveTimeout = setTimeout(saveCustomThresholds, 500);
+        window._thresholdSaveTimeout = setTimeout(savePresetThresholds, 500);
     }
     
-    function updatePresetButtons() {
-        document.querySelectorAll('.preset-btn').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.preset === currentThresholdPreset);
+    function updateEditorPresetButtons() {
+        const modifiedPresets = settingsData.modified_presets || [];
+        document.querySelectorAll('.threshold-content .preset-btn').forEach(btn => {
+            const preset = btn.dataset.preset;
+            btn.classList.toggle('active', preset === currentEditorPreset);
+            btn.classList.toggle('modified', modifiedPresets.includes(preset));
         });
-        document.getElementById('presetFilter').value = currentThresholdPreset;
     }
     
-    function updatePresetHint() {
-        document.getElementById('presetHint').textContent = PRESET_HINTS[currentThresholdPreset] || '';
-        document.getElementById('copyFromRow').classList.toggle('visible', currentThresholdPreset === 'custom');
+    function updateEditorHint() {
+        document.getElementById('presetHint').textContent = PRESET_HINTS[currentEditorPreset] || '';
     }
     
-    function copyFromPreset(name) {
-        const preset = thresholdPresets[name];
-        if (!preset) return;
-        renderThresholdTable('ata', preset.ata || {}, true);
-        renderThresholdTable('nvme', preset.nvme || {}, true);
-        onThresholdChange();
+    function updateResetButton() {
+        const resetBtn = document.getElementById('resetPresetBtn');
+        const modifiedPresets = settingsData.modified_presets || [];
+        const canReset = currentEditorPreset !== 'custom' && modifiedPresets.includes(currentEditorPreset);
+        resetBtn.style.display = canReset ? '' : 'none';
     }
     
-    function selectPreset(name) {
-        currentThresholdPreset = name;
-        document.getElementById('presetFilter').value = name;
+    function selectEditorPreset(name) {
+        currentEditorPreset = name;
         
-        const isCustom = name === 'custom';
+        // Load the preset data (user override if exists, else shipped)
+        const presetData = getEditorPresetData(name);
         
-        if (isCustom) {
-            // Load current values (or last custom, or copy from current preset)
-            const current = settingsData.thresholds || thresholdPresets['backblaze'] || {};
-            renderThresholdTable('ata', current.ata || {}, true);
-            renderThresholdTable('nvme', current.nvme || {}, true);
-        } else {
-            // Load preset values (read-only)
-            const preset = thresholdPresets[name];
-            if (preset) {
-                renderThresholdTable('ata', preset.ata || {}, false);
-                renderThresholdTable('nvme', preset.nvme || {}, false);
-            }
-            // Save preset selection
-            setPreset(name);
-        }
+        // Render tables (always editable)
+        renderThresholdTable('ata', presetData.ata || {}, true);
+        renderThresholdTable('nvme', presetData.nvme || {}, true);
         
-        updatePresetButtons();
-        updatePresetHint();
+        // Update UI
+        updateEditorPresetButtons();
+        updateEditorHint();
+        updateResetButton();
     }
     
-    async function saveCustomThresholds() {
+    async function savePresetThresholds() {
         // Collect all threshold values from the form
         const thresholds = { ata: { warning: {}, critical: {} }, nvme: { warning: {}, critical: {} } };
         
@@ -3445,16 +3637,75 @@
             const res = await fetch('/api/settings', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ custom_thresholds: thresholds, threshold_preset: 'custom' })
+                body: JSON.stringify({ preset_thresholds: { preset: currentEditorPreset, thresholds: thresholds } })
             });
             const result = await res.json();
-            if (result.success) {
-                settingsData.thresholds = thresholds;
-                settingsData.active_preset = 'custom';
-                loadData();
+            if (result.saved_preset) {
+                // Update local state
+                settingsData.user_overrides = settingsData.user_overrides || {};
+                settingsData.user_overrides[currentEditorPreset] = thresholds;
+                settingsData.modified_presets = result.modified_presets || [];
+                
+                // Show status
+                const statusEl = document.getElementById('thresholdStatus');
+                statusEl.textContent = '✓ Saved';
+                setTimeout(() => statusEl.textContent = '', 2000);
+                
+                // Update UI
+                updateEditorPresetButtons();
+                updateResetButton();
+                
+                // Reload disk data if editing the active preset
+                if (currentEditorPreset === settingsData.active_preset) {
+                    loadData();
+                }
             }
         } catch (e) {
-            console.error('Failed to save custom thresholds:', e);
+            console.error('Failed to save thresholds:', e);
+            const statusEl = document.getElementById('thresholdStatus');
+            statusEl.style.color = 'var(--danger)';
+            statusEl.textContent = '✗ Save failed';
+            setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 3000);
+        }
+    }
+    
+    async function resetPresetToDefaults() {
+        if (currentEditorPreset === 'custom') return;
+        
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reset_preset: currentEditorPreset })
+            });
+            const result = await res.json();
+            if (result.reset_preset) {
+                // Update local state
+                settingsData.user_overrides = settingsData.user_overrides || {};
+                settingsData.user_overrides[currentEditorPreset] = null;
+                settingsData.modified_presets = result.modified_presets || [];
+                
+                // Reload the shipped preset data
+                const presetData = thresholdPresets[currentEditorPreset] || {};
+                renderThresholdTable('ata', presetData.ata || {}, true);
+                renderThresholdTable('nvme', presetData.nvme || {}, true);
+                
+                // Show status
+                const statusEl = document.getElementById('thresholdStatus');
+                statusEl.textContent = '✓ Reset to defaults';
+                setTimeout(() => statusEl.textContent = '', 2000);
+                
+                // Update UI
+                updateEditorPresetButtons();
+                updateResetButton();
+                
+                // Reload disk data if editing the active preset
+                if (currentEditorPreset === settingsData.active_preset) {
+                    loadData();
+                }
+            }
+        } catch (e) {
+            console.error('Failed to reset preset:', e);
         }
     }
     
@@ -3464,6 +3715,7 @@
         document.getElementById('themeSun').style.display = 'none';
         document.getElementById('themeMoon').style.display = '';
     }
+    initEndpointServiceDropdown();
     initDropdowns();
     // Load settings to get delta range and preset, then load data
     fetch('/api/settings').then(r => r.json()).then(s => {

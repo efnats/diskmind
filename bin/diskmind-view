@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
 from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
                           get_disk_issues, check_threshold, decode_seagate_value,
                           generate_alerts, send_notifications, _send_webhook,
-                          _format_payload, load_thresholds_from_dir,
+                          _format_payload, load_thresholds_from_dir, load_preset_thresholds,
                           DEFAULT_PRESET,
                           CUMULATIVE_EVENT_ATTRS, CRITICAL_STATE_ATTRS)
 
@@ -557,23 +557,85 @@ def load_thresholds() -> dict:
     return load_thresholds_from_dir(config_dir)
 
 
-def save_custom_thresholds(thresholds: dict):
-    """Save custom thresholds to config/custom_thresholds.json."""
+def _load_user_overrides() -> dict:
+    """Load user overrides from custom_thresholds.json."""
+    custom_path = _get_config_path().parent / 'custom_thresholds.json'
+    if custom_path.exists():
+        try:
+            return json.loads(custom_path.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def _save_user_overrides(overrides: dict):
+    """Save user overrides to custom_thresholds.json."""
     custom_path = _get_config_path().parent / 'custom_thresholds.json'
     custom_path.parent.mkdir(parents=True, exist_ok=True)
     with open(custom_path, 'w') as f:
-        json.dump(thresholds, f, indent=2)
+        json.dump(overrides, f, indent=2)
         f.write('\n')
+
+
+def save_preset_thresholds(preset_name: str, thresholds: dict):
+    """Save thresholds for a specific preset."""
+    overrides = _load_user_overrides()
+    overrides[preset_name] = thresholds
+    _save_user_overrides(overrides)
+
+
+def reset_preset_thresholds(preset_name: str):
+    """Reset a preset to shipped defaults (set override to null)."""
+    overrides = _load_user_overrides()
+    overrides[preset_name] = None
+    _save_user_overrides(overrides)
+
+
+def save_custom_thresholds(thresholds: dict):
+    """Save custom thresholds (legacy, calls save_preset_thresholds)."""
+    save_preset_thresholds('custom', thresholds)
+
+
+def is_preset_modified(preset_name: str) -> bool:
+    """Check if a preset has user modifications."""
+    overrides = _load_user_overrides()
+    return preset_name in overrides and overrides[preset_name] is not None
 
 
 # Cache thresholds at module level (invalidated on settings change)
 _thresholds = None
 
 def get_thresholds() -> dict:
+    """Get thresholds for dashboard view."""
     global _thresholds
     if _thresholds is None:
         _thresholds = load_thresholds()
     return _thresholds
+
+
+def get_notification_thresholds() -> dict:
+    """Get thresholds for alert generation (uses notification settings)."""
+    config = load_config()
+    notify_config = config.get('notifications', {})
+    preset_name = notify_config.get('threshold_preset', 'backblaze')
+    config_dir = _get_config_path().parent
+    return load_preset_thresholds(config_dir, preset_name)
+
+
+def get_notification_history_days() -> float:
+    """Get history (delta) days for alert generation from notification settings."""
+    config = load_config()
+    notify_config = config.get('notifications', {})
+    history = notify_config.get('history', '7d')
+    # Parse history string to days
+    if history == 'all':
+        return 36500  # Effectively all time
+    if history.endswith('h'):
+        return float(history[:-1]) / 24
+    if history.endswith('d'):
+        return float(history[:-1])
+    return 7  # Default
+
 
 def invalidate_threshold_cache():
     global _thresholds
@@ -824,10 +886,19 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                         'active': name == preset_name,
                     })
                 
+                # Check which presets have user modifications
+                modified_presets = [p for p in ['relaxed', 'conservative', 'backblaze'] 
+                                   if is_preset_modified(p)]
+                
+                # Load user overrides for preset editor
+                user_overrides = _load_user_overrides()
+                
                 self.send_json({
                     'active_preset': preset_name,
                     'presets': preset_list,
-                    'all_presets': presets,  # Full preset data for threshold editor
+                    'all_presets': presets,  # Shipped preset data
+                    'user_overrides': user_overrides,  # User modifications
+                    'modified_presets': modified_presets,  # Which presets are modified
                     'thresholds': get_thresholds(),
                     'hosts': config.get('hosts', []),
                     'temp_unit': config.get('temp_unit', 'C'),
@@ -895,13 +966,34 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 
                 result = {}
                 
-                # Handle custom thresholds
+                # Handle custom thresholds (legacy)
                 custom_thresholds = data.get('custom_thresholds')
                 if custom_thresholds:
                     # Save custom thresholds to config
                     save_custom_thresholds(custom_thresholds)
                     invalidate_threshold_cache()
                     result['thresholds'] = custom_thresholds
+                
+                # Handle preset thresholds (new: save thresholds for any preset)
+                preset_thresholds = data.get('preset_thresholds')
+                if preset_thresholds:
+                    preset = preset_thresholds.get('preset')
+                    thresholds = preset_thresholds.get('thresholds')
+                    if preset and thresholds:
+                        save_preset_thresholds(preset, thresholds)
+                        invalidate_threshold_cache()
+                        result['saved_preset'] = preset
+                        result['modified_presets'] = [p for p in ['relaxed', 'conservative', 'backblaze'] 
+                                                      if is_preset_modified(p)]
+                
+                # Handle preset reset (reset to shipped defaults)
+                reset_preset = data.get('reset_preset')
+                if reset_preset and reset_preset in ['relaxed', 'conservative', 'backblaze']:
+                    reset_preset_thresholds(reset_preset)
+                    invalidate_threshold_cache()
+                    result['reset_preset'] = reset_preset
+                    result['modified_presets'] = [p for p in ['relaxed', 'conservative', 'backblaze'] 
+                                                  if is_preset_modified(p)]
                 
                 # Handle threshold preset change
                 preset_name = data.get('threshold_preset')
@@ -1168,8 +1260,9 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     conn.commit()
                     
                     # Check for status changes and send notifications
-                    thresholds = get_thresholds()
-                    new_alerts = generate_alerts(conn, readings, thresholds, timestamp)
+                    # Use notification-specific thresholds (may differ from dashboard view)
+                    notify_thresholds = get_notification_thresholds()
+                    new_alerts = generate_alerts(conn, readings, notify_thresholds, timestamp)
                     if new_alerts:
                         notify_config = config.get('notifications', {})
                         send_notifications(conn, new_alerts, notify_config,

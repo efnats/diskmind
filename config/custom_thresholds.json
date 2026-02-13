@@ -120,5 +120,6 @@
         "display": "temperature"
       }
     }
-  }
+  },
+  "relaxed": null
 }

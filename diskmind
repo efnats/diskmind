@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# diskmind - unified entry point
+
+set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+case "${1:-help}" in
+    web|serve)
+        shift
+        exec "$SCRIPT_DIR/bin/diskmind_web" "$@"
+        ;;
+    fetch)
+        shift
+        exec "$SCRIPT_DIR/bin/diskmind_fetch" "$@"
+        ;;
+    scan)
+        shift
+        exec "$SCRIPT_DIR/bin/diskmind_scan" "$@"
+        ;;
+    version|-v|--version)
+        echo "diskmind $(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core" | cut -d"'" -f2)"
+        ;;
+    help|-h|--help|*)
+        VERSION=$(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core" | cut -d"'" -f2)
+        cat <<EOF
+diskmind v${VERSION} - SMART disk health monitoring
+
+Usage: diskmind <command> [options]
+
+Commands:
+  web [--port N]       Start web dashboard (default: 8080)
+  fetch [--hosts ...]  Collect SMART data via SSH
+  scan [--push ...]    Run on target host (agent mode)
+  version              Show version
+  help                 Show this help
+
+Examples:
+  diskmind web --port 8080
+  diskmind fetch --hosts 192.168.1.10,192.168.1.11
+  diskmind scan --push http://server:8080 --host 192.168.1.10
+
+Documentation: https://github.com/efnats/diskmind
+EOF
+        ;;
+esac

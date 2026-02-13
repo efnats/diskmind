@@ -1,7 +1,7 @@
 """
 diskmind-core — Shared library for diskmind components.
 
-Provides common utilities used by both diskmind-fetch and diskmind-view:
+Provides common utilities used by both diskmind_fetch and diskmind_web:
 - Config parsing
 - SMART attribute classification (thresholds, delta logic)
 - Seagate composite value decoding
@@ -214,7 +214,7 @@ def classify_disk(r: dict, thresholds: dict, history: dict = None,
 
 
 # ---------------------------------------------------------------------------
-# Threshold Loading (standalone, no dependency on diskmind-view)
+# Threshold Loading (standalone, no dependency on diskmind_web)
 # ---------------------------------------------------------------------------
 
 DEFAULT_PRESET = 'backblaze'

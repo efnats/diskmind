@@ -1,5 +1,5 @@
 #!/bin/bash
-# diskmind-scan - Node Agent
+# diskmind_scan - Node Agent
 # Outputs SMART data as CSV to stdout, or pushes to server with --push
 
 # Parse arguments
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --help|-h)
-            echo "Usage: diskmind-scan [--push URL] [--host HOSTNAME] [--token TOKEN] [--log FILE] [--buffer-dir DIR]"
+            echo "Usage: diskmind_scan [--push URL] [--host HOSTNAME] [--token TOKEN] [--log FILE] [--buffer-dir DIR]"
             echo ""
             echo "Collects SMART data from local disks."
             echo ""

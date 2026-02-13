@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Shared library
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'lib'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
                           get_disk_issues, check_threshold, decode_seagate_value,
                           generate_alerts, send_notifications, _send_webhook,
@@ -668,14 +668,14 @@ def invalidate_threshold_cache():
     _thresholds = None
 
 
-# Cache diskmind-fetch module (loaded once, reused for all ingest/push operations)
+# Cache diskmind_fetch module (loaded once, reused for all ingest/push operations)
 _fetch_module = None
 
 def get_fetch_module():
-    """Load and cache the diskmind-fetch module for its library functions."""
+    """Load and cache the diskmind_fetch module for its library functions."""
     global _fetch_module
     if _fetch_module is None:
-        fetch_path = Path(__file__).parent / 'diskmind-fetch'
+        fetch_path = Path(__file__).parent / 'diskmind_fetch'
         spec = importlib.util.spec_from_loader('diskmind_fetch',
             importlib.machinery.SourceFileLoader('diskmind_fetch', str(fetch_path)))
         _fetch_module = importlib.util.module_from_spec(spec)
@@ -696,7 +696,7 @@ _html_template = None
 _dev_mode = False
 
 def get_html_template() -> str:
-    """Load HTML template from lib/dashboard.html with version injection."""
+    """Load HTML template from templates/dashboard.html with version injection."""
     global _html_template
     if _dev_mode or _html_template is None:
         path = Path(__file__).parent.parent / 'lib' / 'dashboard.html'
@@ -1396,7 +1396,7 @@ def main():
     
     # Set handler config
     SmartHTTPHandler.db_path = args.db
-    SmartHTTPHandler.fetch_script = str(Path(__file__).parent / 'diskmind-fetch')
+    SmartHTTPHandler.fetch_script = str(Path(__file__).parent / 'diskmind_fetch')
     
     # Dev mode: reload template on every request
     if args.dev:

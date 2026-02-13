@@ -235,12 +235,15 @@ def load_thresholds_from_dir(config_dir) -> dict:
     from pathlib import Path
     config_dir = Path(config_dir)
 
-    # Read preset name from config
+    # Read preset name from config (with fallback to .example)
     config_path = config_dir / 'config.yaml'
+    example_path = config_dir / 'config.yaml.example'
+    path_to_use = config_path if config_path.exists() else example_path
+    
     config = {}
-    if config_path.exists():
+    if path_to_use.exists():
         try:
-            config = parse_simple_yaml(config_path.read_text())
+            config = parse_simple_yaml(path_to_use.read_text())
         except IOError:
             pass
     preset_name = config.get('threshold_preset', DEFAULT_PRESET)

@@ -218,8 +218,19 @@ def init_database(db_path: str) -> sqlite3.Connection:
 # ---------------------------------------------------------------------------
 
 def load_config(config_path: str) -> dict:
-    """Load configuration from YAML file."""
-    with open(config_path) as f:
+    """Load configuration from YAML file with fallback to .example."""
+    path = Path(config_path)
+    example_path = path.with_suffix('.yaml.example') if path.suffix == '.yaml' else Path(str(path) + '.example')
+    
+    # Try config.yaml first, then .example
+    if path.exists():
+        path_to_use = path
+    elif example_path.exists():
+        path_to_use = example_path
+    else:
+        raise FileNotFoundError(f"Config not found: {config_path} or {example_path}")
+    
+    with open(path_to_use) as f:
         config = parse_simple_yaml(f.read())
     
     # Load hosts from file if specified

@@ -405,18 +405,41 @@ def _get_config_path() -> Path:
     return base_dir / 'config' / 'config.yaml'
 
 
+def _get_example_config_path() -> Path:
+    """Get path to config/config.yaml.example."""
+    base_dir = Path(__file__).parent.parent
+    return base_dir / 'config' / 'config.yaml.example'
+
+
+def _ensure_config_exists():
+    """Copy config.yaml.example to config.yaml if it doesn't exist."""
+    config_path = _get_config_path()
+    if config_path.exists():
+        return
+    example_path = _get_example_config_path()
+    if example_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy(example_path, config_path)
+
+
 _config_cache = None
 _config_mtime = 0
 
 def load_config() -> dict:
-    """Load user config from config/config.yaml (cached, re-reads on file change)."""
+    """Load user config from config/config.yaml with fallback to config.yaml.example."""
     global _config_cache, _config_mtime
     config_path = _get_config_path()
+    example_path = _get_example_config_path()
+    
+    # Try config.yaml first, then .example
+    path_to_use = config_path if config_path.exists() else example_path
+    
     try:
-        mtime = config_path.stat().st_mtime
+        mtime = path_to_use.stat().st_mtime
         if _config_cache is not None and mtime == _config_mtime:
             return _config_cache
-        with open(config_path) as f:
+        with open(path_to_use) as f:
             _config_cache = parse_simple_yaml(f.read())
         _config_mtime = mtime
         return _config_cache
@@ -427,6 +450,7 @@ def load_config() -> dict:
 def save_config_value(key: str, value):
     """Update a single top-level key in config/config.yaml, preserving comments.
     If value is None, removes the key from the config file."""
+    _ensure_config_exists()
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -458,6 +482,7 @@ def save_config_value(key: str, value):
 
 def save_config_list(key: str, items: list):
     """Update a top-level list key in config/config.yaml, preserving comments."""
+    _ensure_config_exists()
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -499,6 +524,7 @@ def save_config_list(key: str, items: list):
 
 def save_config_subkey(section: str, key: str, value):
     """Update a nested key (e.g. ssh.user) in config/config.yaml."""
+    _ensure_config_exists()
     config_path = _get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
     

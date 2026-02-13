@@ -1,6 +1,6 @@
 # diskmind
 
-Lightweight SMART disk health monitoring for Linux servers. Collects SMART data via SSH pull or agent push, stores it in SQLite, and serves an interactive web dashboard.
+Lightweight SMART disk health monitoring for Linux servers. Collects SMART data via SSH pull or agent push, stores it in SQLite, and serves an interactive web dashboard with push notifications.
 
 ![Dashboard Screenshot](docs/screenshot.png)
 
@@ -13,10 +13,11 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 - **All SMART attributes** — stored as JSON, not limited to a fixed subset
 - **Web dashboard** — sortable tables, dark/light theme, status filtering, custom dropdowns
 - **Inline host editing** — edit hostname, SSH user, and collection method directly in the dashboard
-- **Settings panel** — manage hosts and temperature unit (°C/°F) from the dashboard
+- **Settings panel** — manage hosts, thresholds, and notifications from the dashboard
 - **Trend tracking** — sparkline charts showing attribute history with delta indicators
 - **Delta-based alerting** — cumulative counters only trigger warnings if they increased within the selected time range
-- **Configurable thresholds** — three presets (relaxed, conservative, backblaze) with custom threshold editor
+- **Configurable thresholds** — four presets (relaxed, conservative, backblaze, custom) with built-in threshold editor
+- **Push notifications** — alerts via ntfy, Gotify, Discord, Slack, Pushover, Telegram, or generic webhooks
 - **Seagate decoding** — composite raw values decoded automatically
 - **Attribute tooltips** — hover any attribute name for a plain-language explanation
 - **Threshold tooltips** — hover colored values to see why they triggered a warning or critical alert
@@ -28,15 +29,20 @@ Lightweight SMART disk health monitoring for Linux servers. Collects SMART data 
 
 ```
 diskmind/
-  bin/                User-facing executables
-    diskmind-fetch      Orchestrates SSH collection, writes to SQLite
-    diskmind-view       Serves web dashboard
-    diskmind-scan       Runs on target hosts, calls smartctl, outputs CSV or pushes to server
-  config/             User-editable settings
-    config.yaml         Hosts, SSH, database, threshold preset, delta range
-    thresholds.json     Threshold preset definitions
-  data/               Runtime data (gitignored)
-    diskmind.db            SQLite database
+  bin/                  User-facing executables
+    diskmind-fetch        Orchestrates SSH collection, writes to SQLite
+    diskmind-view         Serves web dashboard
+    diskmind-scan         Runs on target hosts, calls smartctl, outputs CSV or pushes to server
+  config/               User-editable settings
+    config.yaml.example   Example configuration (used as fallback)
+    config.yaml           User config (auto-created on first change, gitignored)
+    thresholds.json       Threshold preset definitions (shipped defaults)
+    custom_thresholds.json  User-modified thresholds (created on edit)
+  lib/                  Shared code
+    diskmind_core.py      Common functions used by all components
+    dashboard.html        Web dashboard (single-page app)
+  data/                 Runtime data (gitignored)
+    diskmind.db           SQLite database
 ```
 
 ## Architecture
@@ -57,7 +63,7 @@ The central server connects via SSH, runs `diskmind-scan` on the target, and col
 │  Host B      │ ◄── SSH: run scan ──────── │                  │        │                  │
 │  (smartctl)  │ ──── CSV stdout ─────────► │                  │        │  Web dashboard   │
                                                      │                  │                  │
-                                                data/diskmind.db ─────────►│                  │
+                                            data/diskmind.db ─────────►│                  │
                                                                         └──────────────────┘
 ```
 
@@ -83,7 +89,7 @@ The agent runs on the target host (via cron), collects SMART data locally, and p
 |-----------|------|------|
 | **scan** | `bin/diskmind-scan` | Runs on each host, calls `smartctl`, outputs CSV or pushes to server |
 | **fetch** | `bin/diskmind-fetch` | Pushes scan to SSH hosts, parses results, writes to SQLite |
-| **view** | `bin/diskmind-view` | Reads SQLite, serves web dashboard |
+| **view** | `bin/diskmind-view` | Reads SQLite, serves web dashboard, sends notifications |
 
 ## Requirements
 
@@ -99,7 +105,8 @@ The agent runs on the target host (via cron), collects SMART data locally, and p
 git clone https://github.com/YOUR_USER/diskmind.git
 cd diskmind
 
-# Edit config
+# Edit config (optional - runs with defaults from config.yaml.example)
+cp config/config.yaml.example config/config.yaml
 vi config/config.yaml    # Set your hosts
 
 # Fetch data
@@ -108,6 +115,8 @@ vi config/config.yaml    # Set your hosts
 # Start dashboard
 ./bin/diskmind-view --port 8080
 ```
+
+> **Note:** If `config/config.yaml` doesn't exist, diskmind uses `config.yaml.example` as fallback. On first settings change via dashboard, `config.yaml` is created automatically.
 
 ### Push Mode (agent on target host)
 
@@ -195,7 +204,7 @@ database:
   path: ./data/diskmind.db
   retention_days: 365
 
-# Threshold preset: relaxed, conservative, backblaze
+# Threshold preset: relaxed, conservative, backblaze, custom
 threshold_preset: backblaze
 
 # Delta time range for issue detection: 1h, 24h, 7d, 30d, 90d, all
@@ -211,6 +220,26 @@ push_token: mysecrettoken
 rate_limit:
   max_requests: 10    # Set to 0 to disable
   window_seconds: 60
+
+# Alert Panel settings
+panel:
+  alert_retention_days: 7
+  alert_sound: warning    # off, critical, warning, info
+
+# Push notification settings
+notifications:
+  min_severity: warning   # off, critical, warning, info
+  cooldown_minutes: 15
+  include_recovery: false
+  threshold_preset: backblaze  # Independent from dashboard view
+  history: 7d                  # Time range for alert detection
+
+# Webhook endpoints for push notifications
+webhook_urls:
+  - ntfy:https://ntfy.example.com/diskmind
+  - gotify:https://gotify.example.com/message?token=xxx
+  - discord:https://discord.com/api/webhooks/xxx/yyy
+  - slack:https://hooks.slack.com/services/xxx/yyy/zzz
 ```
 
 ### Push Authentication
@@ -245,8 +274,9 @@ SSH hosts are collected by `diskmind-fetch`. Push hosts send data via `diskmind-
 | **Relaxed** | Home/lab use. Higher thresholds, fewer false positives. |
 | **Conservative** | Important data. Stricter thresholds for early warnings. |
 | **Backblaze** | Industry standard based on 300k+ drive failure data. |
+| **Custom** | User-defined thresholds via the built-in editor. |
 
-Presets can be selected from the dashboard or edited with the built-in threshold editor (⚙️ button).
+Presets can be selected from the dashboard or edited with the built-in threshold editor (⚙️ button). Edits to standard presets are saved separately and can be reset to defaults.
 
 ### Delta-Based Issue Detection
 
@@ -258,6 +288,55 @@ SMART attributes fall into two categories:
 | **Cumulative counters** | Command timeouts, unsafe shutdowns, error log entries | Only shown if value increased within delta range |
 
 This reduces noise from old events while highlighting active problems. Select the time range (1 hour to all time) from the History dropdown in the dashboard.
+
+## Notifications
+
+diskmind can send push notifications when disk issues are detected. Alerts appear in the local Alert Panel and can optionally be pushed to external services.
+
+### Notification Settings
+
+Configure in Settings → Notifications:
+
+| Setting | Description |
+|---------|-------------|
+| **Detection: Threshold** | Threshold profile for alert detection (independent from dashboard view) |
+| **Detection: History** | Time range for detecting changes in cumulative counters |
+| **Local: Alert sound** | Browser notification sound (off, critical only, warning+, all) |
+| **Local: Keep alerts** | How long to retain alerts in the Alert Panel |
+| **Push: Severity** | Minimum severity to send push notifications (off, critical, warning, info) |
+| **Push: Quiet period** | Minimum time between repeated alerts for the same issue |
+| **Push: Recovery** | Send notification when disk status improves |
+
+### Supported Services
+
+| Service | URL Format |
+|---------|------------|
+| **ntfy** | `https://ntfy.sh/your-topic` |
+| **Gotify** | `https://gotify.example.com/message?token=...` |
+| **Discord** | `https://discord.com/api/webhooks/...` |
+| **Slack** | `https://hooks.slack.com/services/...` |
+| **Pushover** | `https://api.pushover.net/1/messages.json` |
+| **Telegram** | `https://api.telegram.org/bot.../sendMessage` |
+| **Generic** | Any URL accepting HTTP POST with JSON body |
+
+Add endpoints in Settings → Notifications → Endpoints. The service type is auto-detected from the URL or can be selected manually.
+
+### Alert Payload
+
+Push notifications are sent as HTTP POST with JSON body:
+
+```json
+{
+  "host": "192.168.1.10",
+  "disk": "WDC WD40EFRX-68N32N0",
+  "serial": "WD-WCC7K0ABC123",
+  "severity": "warning",
+  "message": "Reallocated_Sector_Ct: 8 (threshold: 5)",
+  "timestamp": "2025-01-15T10:30:00Z"
+}
+```
+
+For ntfy/Gotify/Discord/Slack, the payload is formatted appropriately for each service.
 
 ## Dashboard
 
@@ -277,10 +356,11 @@ The web dashboard provides:
 - **Sortable columns** — device, type, model, serial, capacity, power-on hours, temperature, since, last, status
 - **Detail panel** — click any row to expand; shows sidebar with disk identity and SMART attribute table with values, deltas, and sparkline trends
 - **Show all attributes** — health attributes shown by default, click to expand all attributes
-- **Settings panel** — temperature unit (°C/°F) preference
-- **Threshold editor** — customize warning/critical thresholds per attribute
+- **Alert panel** — local alerts with sound notifications and retention settings
+- **Settings panel** — temperature unit, thresholds, and notification configuration
+- **Threshold editor** — customize warning/critical thresholds per attribute with reset to defaults
 - **Dark/light theme** — persisted across reloads
-- **Auto-refresh** — every 60 seconds, preserving scroll position and expanded panels
+- **Auto-refresh** — configurable interval, preserving scroll position and expanded panels
 
 ### Health Classification
 
@@ -298,24 +378,24 @@ Seagate drives pack multiple counters into single 48-bit raw values. diskmind au
 
 ## Data Storage
 
-Schema v1.5:
+Schema v1.7:
 
 ```sql
 readings (
     disk_id         TEXT,       -- Primary identifier (WWN or serial)
     wwn             TEXT,       -- World Wide Name
     serial          TEXT,       -- Disk serial number
-    timestamp       DATETIME,  -- Collection time
+    timestamp       DATETIME,   -- Collection time
     host            TEXT,       -- Source host
     device          TEXT,       -- e.g. /dev/sda
     type            TEXT,       -- HDD, SSD, NVMe
     model           TEXT,       -- Disk model
-    capacity_bytes  INTEGER,   -- Disk size
+    capacity_bytes  INTEGER,    -- Disk size
     firmware        TEXT,       -- Firmware version
-    rpm             INTEGER,   -- Rotation rate (0 for SSD)
-    sector_size     INTEGER,   -- Logical sector size in bytes
+    rpm             INTEGER,    -- Rotation rate (0 for SSD)
+    sector_size     INTEGER,    -- Logical sector size in bytes
     smart_status    TEXT,       -- PASSED, FAILED, N/A
-    smart_attributes TEXT,     -- JSON with all SMART attributes
+    smart_attributes TEXT,      -- JSON with all SMART attributes
     PRIMARY KEY (disk_id, timestamp)
 )
 
@@ -333,6 +413,27 @@ push_attempts (
     last_attempt    DATETIME,
     attempts        INTEGER,
     reason          TEXT        -- 'unknown' (pending approval) or 'ssh' (method mismatch)
+)
+
+alerts (
+    id              INTEGER PRIMARY KEY,
+    timestamp       DATETIME,
+    host            TEXT,
+    disk_id         TEXT,
+    severity        TEXT,       -- info, warning, critical
+    attribute       TEXT,
+    message         TEXT,
+    resolved        INTEGER,    -- 0 or 1
+    resolved_at     DATETIME
+)
+
+notification_log (
+    id              INTEGER PRIMARY KEY,
+    alert_id        INTEGER,
+    endpoint        TEXT,
+    timestamp       DATETIME,
+    success         INTEGER,
+    error           TEXT
 )
 ```
 

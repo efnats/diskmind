@@ -10,7 +10,7 @@ Provides common utilities used by both diskmind-fetch and diskmind-view:
 import json
 from datetime import datetime as _dt, timedelta as _td
 
-VERSION = '1.6'
+VERSION = '1.7'
 
 
 # ---------------------------------------------------------------------------

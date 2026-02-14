@@ -18,10 +18,10 @@ case "${1:-help}" in
         exec "$SCRIPT_DIR/bin/diskmind_scan" "$@"
         ;;
     version|-v|--version)
-        echo "diskmind $(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core" | cut -d"'" -f2)"
+        echo "diskmind $(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core.py" | cut -d"'" -f2)"
         ;;
     help|-h|--help|*)
-        VERSION=$(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core" | cut -d"'" -f2)
+        VERSION=$(grep -m1 "VERSION" "$SCRIPT_DIR/bin/diskmind_core.py" | cut -d"'" -f2)
         cat <<EOF
 diskmind v${VERSION} - SMART disk health monitoring
 

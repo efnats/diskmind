@@ -699,7 +699,7 @@ def get_html_template() -> str:
     """Load HTML template from templates/dashboard.html with version injection."""
     global _html_template
     if _dev_mode or _html_template is None:
-        path = Path(__file__).parent.parent / 'lib' / 'dashboard.html'
+        path = Path(__file__).parent.parent / 'templates' / 'dashboard.html'
         _html_template = path.read_text().replace('{{VERSION}}', VERSION)
     return _html_template
 

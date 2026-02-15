@@ -238,6 +238,21 @@
                     </div>
                     
                     <div class="settings-row">
+                        <span class="settings-row-label">Size unit</span>
+                        <div class="custom-select" id="sizeUnitWrapper">
+                            <div class="custom-select-trigger" onclick="toggleDropdown('sizeUnitWrapper')">
+                                <span class="custom-select-value">Decimal (GB, TB)</span>
+                                <svg class="custom-select-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                            </div>
+                            <div class="custom-select-options">
+                                <div class="custom-select-option selected" data-value="decimal">Decimal (GB, TB)</div>
+                                <div class="custom-select-option" data-value="binary">Binary (GiB, TiB)</div>
+                            </div>
+                        </div>
+                        <input type="hidden" id="sizeUnitSelect" value="decimal">
+                    </div>
+                    
+                    <div class="settings-row">
                         <span class="settings-row-label">Auto-refresh</span>
                         <div class="custom-select" id="refreshIntervalWrapper">
                             <div class="custom-select-trigger" onclick="toggleDropdown('refreshIntervalWrapper')">
@@ -277,7 +292,7 @@
                         <input type="hidden" id="retentionSelect" value="365">
                     </div>
                     
-                    <div class="settings-section-title">Server</div>
+                    <div class="settings-section-title">API</div>
                     
                     <div class="settings-row">
                         <span class="settings-row-label">Rate limit <span class="info-icon" data-tip="Limit push requests per IP address. Set to 0 to disable rate limiting.">ⓘ</span></span>
@@ -452,32 +467,30 @@
                 <!-- Thresholds Tab -->
                 <div class="settings-tab-content" id="tabThresholds">
                     <div class="threshold-content">
+                        <div class="settings-section-title">Preset</div>
+                        
                         <div class="preset-buttons">
                             <button class="preset-btn" data-preset="relaxed" onclick="selectEditorPreset('relaxed')">Relaxed</button>
                             <button class="preset-btn" data-preset="conservative" onclick="selectEditorPreset('conservative')">Conservative</button>
                             <button class="preset-btn" data-preset="backblaze" onclick="selectEditorPreset('backblaze')">Backblaze</button>
                             <button class="preset-btn" data-preset="custom" onclick="selectEditorPreset('custom')">Custom</button>
                         </div>
-                        <p class="preset-hint" id="presetHint">Relaxed: Higher thresholds for home/lab use. Fewer alerts.</p>
+                        <p class="preset-hint" id="presetHint">Based on Backblaze failure data from 300k+ drives.</p>
                         
-                        <div class="threshold-section">
-                            <div class="threshold-section-title">ATA / SATA (HDD & SSD)</div>
-                            <table class="threshold-table" id="ataThresholds">
-                                <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
+                        <div class="settings-section-title">ATA / SATA <span class="info-icon" data-tip="Traditional hard drives (HDD) and SATA solid-state drives (SSD). Uses normalized SMART attributes.">ⓘ</span></div>
+                        <table class="threshold-table" id="ataThresholds">
+                            <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
                         
-                        <div class="threshold-section">
-                            <div class="threshold-section-title">NVMe</div>
-                            <table class="threshold-table" id="nvmeThresholds">
-                                <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
+                        <div class="settings-section-title">NVMe <span class="info-icon" data-tip="NVMe solid-state drives connected via PCIe. Uses vendor-specific health metrics.">ⓘ</span></div>
+                        <table class="threshold-table" id="nvmeThresholds">
+                            <thead><tr><th>Attribute</th><th class="col-warning">Warning</th><th class="col-critical">Critical</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
                         
                         <div class="threshold-actions" id="thresholdActions">
-                            <button class="threshold-reset-btn" id="resetPresetBtn" onclick="resetPresetToDefaults()" style="display:none;">Reset to defaults</button>
+                            <a href="#" class="threshold-reset-link" id="resetPresetBtn" onclick="resetPresetToDefaults(); return false;" style="display:none;">Reset to defaults</a>
                             <span class="threshold-status" id="thresholdStatus"></span>
                         </div>
                     </div>

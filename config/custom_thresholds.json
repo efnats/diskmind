@@ -121,5 +121,141 @@
       }
     }
   },
-  "relaxed": null
+  "relaxed": null,
+  "conservative": {
+    "ata": {
+      "warning": {
+        "Reallocated_Sector_Ct": {
+          "op": ">",
+          "value": 0,
+          "display": "reallocated sectors",
+          "id": 5
+        },
+        "Reported_Uncorrect": {
+          "op": ">",
+          "value": 0,
+          "display": "reported uncorrectable",
+          "id": 187
+        },
+        "Command_Timeout": {
+          "op": ">",
+          "value": 0,
+          "display": "command timeout",
+          "id": 188
+        },
+        "Current_Pending_Sector": {
+          "op": ">",
+          "value": 0,
+          "display": "current pending sectors",
+          "id": 197
+        },
+        "Offline_Uncorrectable": {
+          "op": ">",
+          "value": 0,
+          "display": "offline uncorrectable",
+          "id": 198
+        },
+        "Temperature_Celsius": {
+          "op": ">",
+          "value": 45,
+          "display": "temperature",
+          "id": 194
+        }
+      },
+      "critical": {
+        "Reallocated_Sector_Ct": {
+          "op": ">",
+          "value": 50,
+          "display": "reallocated sectors",
+          "id": 5
+        },
+        "Reported_Uncorrect": {
+          "op": ">",
+          "value": 10,
+          "display": "reported uncorrectable",
+          "id": 187
+        },
+        "Command_Timeout": {
+          "op": ">",
+          "value": 50,
+          "display": "command timeout",
+          "id": 188
+        },
+        "Current_Pending_Sector": {
+          "op": ">",
+          "value": 5,
+          "display": "current pending sectors",
+          "id": 197
+        },
+        "Offline_Uncorrectable": {
+          "op": ">",
+          "value": 5,
+          "display": "offline uncorrectable",
+          "id": 198
+        },
+        "Temperature_Celsius": {
+          "op": ">",
+          "value": 55,
+          "display": "temperature",
+          "id": 194
+        }
+      }
+    },
+    "nvme": {
+      "warning": {
+        "Available_Spare": {
+          "op": "<",
+          "value": 25,
+          "display": "available spare"
+        },
+        "Percentage_Used": {
+          "op": ">",
+          "value": 70,
+          "display": "percentage used"
+        },
+        "Error_Information_Log_Entries": {
+          "op": ">",
+          "value": 0,
+          "display": "error log entries"
+        },
+        "Unsafe_Shutdowns": {
+          "op": ">",
+          "value": 25,
+          "display": "unsafe shutdowns"
+        },
+        "Temperature": {
+          "op": ">",
+          "value": 55,
+          "display": "temperature"
+        }
+      },
+      "critical": {
+        "Critical_Warning": {
+          "op": ">",
+          "value": 0,
+          "display": "critical warning"
+        },
+        "Media_and_Data_Integrity_Errors": {
+          "op": ">",
+          "value": 0,
+          "display": "media errors"
+        },
+        "Available_Spare": {
+          "op": "<",
+          "value": 15,
+          "display": "available spare"
+        },
+        "Percentage_Used": {
+          "op": ">",
+          "value": 85,
+          "display": "percentage used"
+        },
+        "Temperature": {
+          "op": ">",
+          "value": 70,
+          "display": "temperature"
+        }
+      }
+    }
+  }
 }

@@ -4,6 +4,7 @@ let statusFilter = '';
 let deltaRangeDays = 30;
 let settingsData = null;
 let tempUnit = 'C'; // 'C' for Celsius, 'F' for Fahrenheit
+let sizeUnit = 'decimal'; // 'decimal' for GB/TB (1000), 'binary' for GiB/TiB (1024)
 
 // Host collapsed state management
 function getHostCollapsedState() {
@@ -154,10 +155,25 @@ function fmtDuration(h) {
 
 function fmtBytes(bytes) {
     if (!bytes || bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(1024));
-    const val = bytes / Math.pow(1024, i);
+    const binary = sizeUnit === 'binary';
+    const base = binary ? 1024 : 1000;
+    const units = binary ? ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] : ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(base));
+    const val = bytes / Math.pow(base, i);
     return val.toFixed(val >= 100 ? 0 : val >= 10 ? 1 : 2) + ' ' + units[i];
+}
+
+function fmtCapacity(bytes) {
+    if (!bytes || bytes <= 0) return '0';
+    const binary = sizeUnit === 'binary';
+    const tb = binary ? 1024 * 1024 * 1024 * 1024 : 1e12;
+    const gb = binary ? 1024 * 1024 * 1024 : 1e9;
+    const tbUnit = binary ? 'TiB' : 'TB';
+    const gbUnit = binary ? 'GiB' : 'GB';
+    if (bytes >= tb) {
+        return (bytes / tb).toFixed(1) + ' ' + tbUnit;
+    }
+    return (bytes / gb).toFixed(0) + ' ' + gbUnit;
 }
 
 function formatAge(ts, compact) {
@@ -286,6 +302,7 @@ function initDropdowns() {
             else if (wrapper.id === 'deltaRangeWrapper') callback = (v) => updateDeltaFromDropdown(v);
             else if (wrapper.id === 'hostFilterWrapper') callback = applyFilters;
             else if (wrapper.id === 'tempUnitWrapper') callback = () => saveTempUnit();
+            else if (wrapper.id === 'sizeUnitWrapper') callback = () => saveSizeUnit();
             else if (wrapper.id === 'refreshIntervalWrapper') callback = () => saveRefreshInterval();
             else if (wrapper.id === 'retentionWrapper') callback = () => saveRetention();
             else if (wrapper.id === 'alertThresholdWrapper') callback = () => saveNotifySettings();
@@ -551,7 +568,7 @@ function renderData() {
     document.getElementById('statWarningSub').textContent = (data.stats.warning || 0) === 1 ? 'Needs Attention' : 'Need Attention';
     document.getElementById('statHealthy').textContent = data.stats.healthy || 0;
     document.getElementById('statTotal').textContent = data.stats.total || 0;
-    document.getElementById('statCapacity').textContent = (data.stats.total_capacity_tb || 0) + ' TB';
+    document.getElementById('statCapacity').textContent = fmtCapacity((data.stats.total_capacity_tb || 0) * 1e12);
     document.getElementById('statMissing').textContent = data.stats.missing || 0;
     document.getElementById('statMissingSub').textContent = (data.stats.missing || 0) === 1 ? 'Not Seen' : 'Not Seen';
     document.getElementById('statArchived').textContent = (data.archived_disks || []).length;
@@ -690,7 +707,8 @@ function renderData() {
             // Normal host with disks
             const critical = disks.filter(d => d.status === 'critical').length;
             const warning = disks.filter(d => d.status === 'warning' || d.status === 'missing').length;
-            const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
+            const totalCapacity = disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0);
+            const capacityStr = fmtCapacity(totalCapacity);
             
             // Find most recent scan timestamp for this host
             let lastScan = '';
@@ -711,7 +729,7 @@ function renderData() {
                         <div>
                             <span class="host-name-display" style="color:var(--text-muted)">Archived</span>
                         </div>
-                        <div class="host-stats"><span>${disks.length} disk${disks.length !== 1 ? 's' : ''} · ${capacityTB} TB</span><span class="host-toggle">▼</span></div>
+                        <div class="host-stats"><span>${disks.length} disk${disks.length !== 1 ? 's' : ''} · ${capacityStr}</span><span class="host-toggle">▼</span></div>
                     </div>
                     <div class="host-content">
                         <table class="disk-table">
@@ -754,7 +772,7 @@ function renderData() {
                             ${hostEditForm}
                             <span id="hostBadge-${host.replace(/\\./g, '-')}">${badge}</span>
                         </div>
-                        <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span><span class="host-toggle">▼</span></div>
+                        <div class="host-stats"><span>${disks.length} drives · ${capacityStr}${lastScan ? ` · ${lastScan}` : ''}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span><span class="host-toggle">▼</span></div>
                     </div>
                     <div class="host-content">
                         <table class="disk-table">
@@ -863,7 +881,7 @@ function renderData() {
 function renderDisk(d, isArchived = false) {
     const typeClass = (d.type || '').toLowerCase();
     const statusDot = d.smart_status === 'PASSED' ? 'ok' : 'fail';
-    const capacity = d.capacity_bytes >= 1e12 ? (d.capacity_bytes / 1e12).toFixed(1) + 'TB' : (d.capacity_bytes / 1e9).toFixed(0) + 'GB';
+    const capacity = fmtCapacity(d.capacity_bytes);
     const diskId = d.disk_id || d.serial;
     const eid = diskId.replace(/[\"' ]/g, '_');
     const attrs = d.smart_attributes || {};
@@ -1683,6 +1701,8 @@ async function loadSettings() {
         renderHosts();
         tempUnit = settingsData.temp_unit || 'C';
         setDropdownValue('tempUnitWrapper', tempUnit);
+        sizeUnit = localStorage.getItem('sizeUnit') || 'decimal';
+        setDropdownValue('sizeUnitWrapper', sizeUnit);
         setDropdownValue('refreshIntervalWrapper', localStorage.getItem('refreshInterval') || '60');
         setDropdownValue('retentionWrapper', String(settingsData.retention_days || 365));
         // Rate limit settings
@@ -2180,6 +2200,13 @@ async function saveTempUnit() {
         });
         renderData(); // Re-render to show new unit
     } catch (e) { console.error('Failed to save temp unit:', e); }
+}
+
+async function saveSizeUnit() {
+    const val = document.getElementById('sizeUnitSelect').value;
+    sizeUnit = val;
+    localStorage.setItem('sizeUnit', val);
+    renderData(); // Re-render to show new unit
 }
 
 async function setPreset(name) {
@@ -2772,11 +2799,9 @@ function onThresholdChange() {
 }
 
 function updateEditorPresetButtons() {
-    const modifiedPresets = settingsData.modified_presets || [];
     document.querySelectorAll('.threshold-content .preset-btn').forEach(btn => {
         const preset = btn.dataset.preset;
         btn.classList.toggle('active', preset === currentEditorPreset);
-        btn.classList.toggle('modified', modifiedPresets.includes(preset));
     });
 }
 
@@ -2915,6 +2940,8 @@ if (localStorage.getItem('theme') === 'dark') {
 }
 initEndpointServiceDropdown();
 initDropdowns();
+// Restore size unit from localStorage
+sizeUnit = localStorage.getItem('sizeUnit') || 'decimal';
 // Load settings to get delta range and preset, then load data
 fetch('/api/settings').then(r => r.json()).then(s => {
     settingsData = s;

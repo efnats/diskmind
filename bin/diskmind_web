@@ -776,6 +776,33 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode())
     
+    def send_static(self, file_path: Path):
+        """Send static file with proper content type and caching."""
+        if not file_path.exists():
+            self.send_error(404, 'File not found')
+            return
+        
+        # Content type mapping
+        content_types = {
+            '.css': 'text/css; charset=utf-8',
+            '.js': 'application/javascript; charset=utf-8',
+            '.json': 'application/json',
+            '.svg': 'image/svg+xml',
+            '.png': 'image/png',
+            '.ico': 'image/x-icon',
+        }
+        content_type = content_types.get(file_path.suffix, 'application/octet-stream')
+        
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        # Cache static files for 1 hour in production, no cache in dev mode
+        if _dev_mode:
+            self.send_header('Cache-Control', 'no-cache')
+        else:
+            self.send_header('Cache-Control', 'public, max-age=3600')
+        self.end_headers()
+        self.wfile.write(file_path.read_bytes())
+    
     def do_GET(self):
         """Handle GET requests."""
         parsed = urlparse(self.path)
@@ -784,6 +811,27 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
         try:
             if path == '/' or path == '/index.html':
                 self.send_html(get_html_template())
+            
+            elif path.startswith('/static/'):
+                # Serve static files (CSS, JS)
+                # Security: only allow specific subdirectories
+                static_root = Path(__file__).parent.parent / 'static'
+                requested = path[8:]  # Remove '/static/' prefix
+                
+                # Prevent directory traversal
+                if '..' in requested or requested.startswith('/'):
+                    self.send_error(403, 'Forbidden')
+                    return
+                
+                file_path = static_root / requested
+                # Ensure file is within static directory
+                try:
+                    file_path.resolve().relative_to(static_root.resolve())
+                except ValueError:
+                    self.send_error(403, 'Forbidden')
+                    return
+                
+                self.send_static(file_path)
             
             elif path == '/api/disks':
                 cleanup_old_readings(self.db_path)

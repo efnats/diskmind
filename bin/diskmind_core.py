@@ -638,26 +638,42 @@ def check_missing_disks(conn, host: str, scanned_disk_ids: set, timestamp: str) 
     """
     cursor = conn.cursor()
     new_alerts = []
+    
+    # Filter out None/empty from scanned_disk_ids
+    scanned_disk_ids = set(d for d in scanned_disk_ids if d)
+    
+    if not scanned_disk_ids:
+        return []  # No disks scanned, can't determine what's missing
 
-    # Get disks that were recently seen on this host (last 7 days)
+    # Get disks that were on this host in the PREVIOUS scan (not current)
+    # We look for the most recent reading per disk BEFORE the current timestamp
     cursor.execute('''
-        SELECT DISTINCT r.disk_id, r.device, r.model, r.serial
+        SELECT r.disk_id, r.device, r.model, r.serial
         FROM readings r
         WHERE r.host = ?
+          AND r.timestamp < ?
           AND r.timestamp > datetime(?, '-7 days')
         GROUP BY r.disk_id
-        HAVING MAX(r.timestamp) = (
-            SELECT MAX(r2.timestamp) FROM readings r2 WHERE r2.disk_id = r.disk_id
-        )
-    ''', (host, timestamp))
+        HAVING r.timestamp = MAX(r.timestamp)
+    ''', (host, timestamp, timestamp))
     
-    known_disks = cursor.fetchall()
+    previous_disks = cursor.fetchall()
+    
+    if not previous_disks:
+        return []  # No previous scan data, nothing to compare
 
     # Get archived disks
     cursor.execute('SELECT disk_id FROM archived_disks')
     archived = set(row[0] for row in cursor.fetchall())
+    
+    # Track which disks we've already processed to avoid duplicates
+    processed = set()
 
-    for disk_id, device, model, serial in known_disks:
+    for disk_id, device, model, serial in previous_disks:
+        if not disk_id or disk_id in processed:
+            continue
+        processed.add(disk_id)
+        
         # Skip if disk was in this scan
         if disk_id in scanned_disk_ids:
             continue
@@ -680,7 +696,7 @@ def check_missing_disks(conn, host: str, scanned_disk_ids: set, timestamp: str) 
         msg = f'Disk missing from {host} — {model} ({serial}) was {device}'
         alert = {
             'alert_type': 'disk_missing',
-            'severity': 'warning',
+            'severity': 'critical',
             'attribute': 'presence',
             'old_value': 'present',
             'new_value': 'missing',

@@ -34,17 +34,20 @@
         .btn.primary:hover { opacity: 0.9; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         
-        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-        .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; border-left: 4px solid var(--accent); cursor: pointer; transition: all 0.15s; }
+        .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 24px; }
+        .stat { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; border-left: 4px solid var(--accent); cursor: pointer; transition: all 0.15s; }
         .stat:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         .stat.active { box-shadow: 0 0 0 2px var(--accent); }
         .stat.critical { border-left-color: var(--danger); }
         .stat.warning { border-left-color: var(--warning); }
         .stat.healthy { border-left-color: var(--success); }
+        .stat.missing { border-left-color: var(--text-muted); }
+        .stat.archived { border-left-color: var(--border); }
         .stat-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
-        .stat-value { font-size: 28px; font-weight: 700; }
+        .stat-value { font-size: 26px; font-weight: 700; }
         .stat.critical .stat-value { color: var(--danger); }
         .stat.warning .stat-value { color: var(--warning); }
+        .stat.missing .stat-value, .stat.archived .stat-value { color: var(--text-muted); }
         .stat-sub { font-size: 12px; color: var(--text-muted); }
         
         .filters { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 24px; display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
@@ -56,9 +59,10 @@
         .filter-group { display: flex; align-items: center; gap: 4px; }
         .filter-group-labeled { display: flex; flex-direction: column; gap: 4px; }
         .filter-group-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
-        .info-icon { cursor: help; opacity: 0.6; font-size: 11px; position: relative; }
+        .info-icon { cursor: help; opacity: 0.6; font-size: 11px; position: relative; display: inline-block; }
         .info-icon:hover { opacity: 1; }
-        .info-icon:hover::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border); padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; width: max-content; max-width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); line-height: 1.5; pointer-events: none; }
+        .info-icon::after { content: attr(data-tip); position: absolute; left: 50%; transform: translateX(-50%); top: 18px; background: var(--bg-primary); color: var(--text-secondary); border: 1px solid var(--border); padding: 10px 14px; border-radius: 6px; font-size: 12px; font-weight: 400; text-transform: none; letter-spacing: normal; white-space: normal; width: max-content; max-width: 260px; z-index: 100; box-shadow: 0 4px 12px rgba(0,0,0,0.15); line-height: 1.5; pointer-events: none; display: none; }
+        .info-icon:hover::after { display: block; }
         .filter-group-controls { display: flex; align-items: center; gap: 6px; }
         .filter-group-controls > select, #deltaRange { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; }
         .filter-group-controls > input:not(.search-input) { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; width: 140px; }
@@ -109,6 +113,19 @@
         
         .host-group { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
         .host-header { padding: 12px 16px; background: var(--bg-hover); display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; }
+        .modal-overlay.visible { opacity: 1; visibility: visible; }
+        .modal { background: var(--bg-card); border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+        .modal-text { font-size: 14px; color: var(--text-secondary); line-height: 1.5; margin-bottom: 20px; }
+        .modal-actions { display: flex; gap: 12px; justify-content: flex-end; }
+        .modal-btn { padding: 8px 16px; border-radius: 6px; font-size: 14px; cursor: pointer; border: none; }
+        .modal-btn-cancel { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); }
+        .modal-btn-cancel:hover { background: var(--bg-hover); }
+        .modal-btn-confirm { background: var(--accent); color: white; }
+        .modal-btn-confirm:hover { opacity: 0.9; }
         .host-name { font-size: 13px; font-weight: 600; }
         .host-name-display { font-size: 13px; font-weight: 600; }
         .host-method-badge { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 5px; border-radius: 3px; margin-right: 6px; vertical-align: 1px; }
@@ -187,6 +204,18 @@
         .disk-row.critical td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
         .disk-row.warning { background: rgba(245,158,11,0.04); }
         .disk-row.warning td:first-child { box-shadow: inset 3px 0 0 var(--warning); }
+        .disk-row.missing { background: rgba(156,163,175,0.06); opacity: 0.7; }
+        .disk-row.missing td:first-child { box-shadow: inset 3px 0 0 var(--text-muted); }
+        .disk-row.missing td { color: var(--text-muted); }
+        .issue.missing { background: rgba(156,163,175,0.15); color: var(--text-muted); }
+        .archive-btn { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: var(--warning); cursor: pointer; padding: 4px 12px; font-size: 12px; border-radius: 4px; font-weight: 500; white-space: nowrap; }
+        .archive-btn:hover { background: rgba(245,158,11,0.2); border-color: var(--warning); }
+        .restore-btn { background: none; border: 1px solid var(--border); color: var(--text-muted); cursor: pointer; padding: 3px 10px; font-size: 12px; border-radius: 4px; }
+        .restore-btn:hover:not(:disabled) { background: var(--bg-secondary); color: var(--text-primary); }
+        .restore-btn.disabled, .restore-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .host-removed { text-decoration: line-through; opacity: 0.6; }
+        .issues-cell { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+        .issues-list { display: flex; flex-wrap: wrap; gap: 6px; }
         
         .device-name { font-weight: 500; font-family: monospace; font-size: 12px; }
         .type-badge { font-size: 9px; padding: 2px 5px; border-radius: 3px; font-weight: 600; margin-left: 8px; text-transform: uppercase; }
@@ -206,6 +235,8 @@
         [data-theme="dark"] .data-coverage-info { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.25); }
         .muted { color: var(--text-muted); }
         .mono { font-family: monospace; font-size: 12px; }
+        .temp-warning { color: var(--warning); font-weight: 500; }
+        .temp-critical { color: var(--danger); font-weight: 500; }
         
         .detail-row td { padding: 0; }
         .detail-row.visible td { background: var(--bg-hover); }
@@ -555,7 +586,9 @@
         [data-theme="dark"] .threshold-content .threshold-reset-btn { border-color: #2a3a52; color: #94a3b8; }
         [data-theme="dark"] .threshold-content .threshold-reset-btn:hover { border-color: #ef4444; color: #ef4444; }
         
-        @media (max-width: 900px) { .stats { grid-template-columns: repeat(2, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
+        @media (max-width: 1200px) { .stats { grid-template-columns: repeat(6, 1fr); gap: 10px; } }
+        @media (max-width: 1000px) { .stats { grid-template-columns: repeat(3, 1fr); } .filters { flex-direction: column; align-items: stretch; } }
+        @media (max-width: 600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
     </style>
 </head>
 <body>
@@ -606,6 +639,16 @@
                 <div class="stat-label">Critical</div>
                 <div class="stat-value" id="statCritical">-</div>
                 <div class="stat-sub">Failing</div>
+            </div>
+            <div class="stat missing" onclick="filterStatus('missing')">
+                <div class="stat-label">Missing</div>
+                <div class="stat-value" id="statMissing">-</div>
+                <div class="stat-sub" id="statMissingSub">Not Seen</div>
+            </div>
+            <div class="stat archived" onclick="filterStatus('archived')">
+                <div class="stat-label">Archived</div>
+                <div class="stat-value" id="statArchived">-</div>
+                <div class="stat-sub">Stored</div>
             </div>
         </div>
         
@@ -1019,12 +1062,36 @@
     </div>
     
     <script>
-    let data = { disks: [], hosts: [], stats: {}, trends: {}, thresholds: {} };
+    let data = { disks: [], archived_disks: [], hosts: [], stats: {}, trends: {}, thresholds: {} };
     let historyCache = {};
     let statusFilter = '';
     let deltaRangeDays = 30;
     let settingsData = null;
     let tempUnit = 'C'; // 'C' for Celsius, 'F' for Fahrenheit
+    
+    // Host collapsed state management
+    function getHostCollapsedState() {
+        try {
+            return JSON.parse(localStorage.getItem('hostCollapsed') || '{}');
+        } catch { return {}; }
+    }
+    
+    function isHostCollapsed(host) {
+        const state = getHostCollapsedState();
+        // Default: Archived is collapsed, others are expanded
+        if (state[host] !== undefined) return state[host];
+        return host === 'Archived';
+    }
+    
+    function toggleHostCollapsed(host) {
+        const state = getHostCollapsedState();
+        const hostGroup = document.querySelector(`.host-group[data-host="${host}"]`);
+        if (hostGroup) {
+            hostGroup.classList.toggle('collapsed');
+            state[host] = hostGroup.classList.contains('collapsed');
+            localStorage.setItem('hostCollapsed', JSON.stringify(state));
+        }
+    }
 
     // Health-relevant attributes by type (order matters - shown first)
     // Attribute descriptions for tooltips
@@ -1545,10 +1612,14 @@
         // Update stats
         document.getElementById('statCritical').textContent = data.stats.critical || 0;
         document.getElementById('statWarning').textContent = data.stats.warning || 0;
-        document.getElementById('statWarningSub').textContent = data.stats.warning === 1 ? 'Needs Attention' : 'Need Attention';
+        document.getElementById('statWarningSub').textContent = (data.stats.warning || 0) === 1 ? 'Needs Attention' : 'Need Attention';
         document.getElementById('statHealthy').textContent = data.stats.healthy || 0;
         document.getElementById('statTotal').textContent = data.stats.total || 0;
         document.getElementById('statCapacity').textContent = (data.stats.total_capacity_tb || 0) + ' TB';
+        document.getElementById('statMissing').textContent = data.stats.missing || 0;
+        document.getElementById('statMissingSub').textContent = (data.stats.missing || 0) === 1 ? 'Not Seen' : 'Not Seen';
+        document.getElementById('statArchived').textContent = (data.archived_disks || []).length;
+        
         document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
         
         // Update host filter dropdown
@@ -1573,6 +1644,12 @@
             if (!byHost[d.host]) byHost[d.host] = [];
             byHost[d.host].push(d);
         });
+        
+        // Add archived disks as special "Archived" host
+        const archivedDisks = data.archived_disks || [];
+        if (archivedDisks.length > 0) {
+            byHost['Archived'] = archivedDisks.map(d => ({ ...d, _isArchived: true }));
+        }
         
         // Get host_status from API response
         const hostStatus = data.host_status || {};
@@ -1616,25 +1693,34 @@
         };
         
         // Render hosts (all configured hosts, even those without disks)
+        // Put "Archived" at the end if it exists
+        const hostOrder = [...data.hosts];
+        if (byHost['Archived']) hostOrder.push('Archived');
+        
         let html = '';
-        for (const host of data.hosts) {
+        for (const host of hostOrder) {
             const disks = byHost[host] || [];
+            const isArchived = host === 'Archived';
             const status = hostStatus[host] || {};
             const hasDisks = disks.length > 0;
-            const hostUser = getHostUser(host);
-            const hostMethod = getHostMethod(host);
-            const hostPort = getHostPort(host);
-            const fullHostEntry = hostConfigMap[host]?.full || host;
+            
+            // Skip archived if no disks (shouldn't happen but just in case)
+            if (isArchived && !hasDisks) continue;
+            
+            const hostUser = isArchived ? null : getHostUser(host);
+            const hostMethod = isArchived ? null : getHostMethod(host);
+            const hostPort = isArchived ? null : getHostPort(host);
+            const fullHostEntry = isArchived ? null : (hostConfigMap[host]?.full || host);
             
             // User display (small text if != root)
             const userDisplay = hostUser ? `<span class="host-user">${hostUser}@</span>` : '';
-            const methodBadge = `<span class="host-method-badge ${hostMethod}">${hostMethod}</span>`;
-            const pushHint = (hostMethod === 'ssh' && pushAttempts[host])
+            const methodBadge = isArchived ? '' : `<span class="host-method-badge ${hostMethod}">${hostMethod}</span>`;
+            const pushHint = (!isArchived && hostMethod === 'ssh' && pushAttempts[host])
                 ? `<span class="push-hint" data-tip="This host attempted to push data ${pushAttempts[host].attempts}×. Consider switching to Push mode.">⚡</span>`
                 : '';
             
             // Inline edit form (hidden by default, replaces host name when editing)
-            const hostEditForm = `<div class="host-edit-form" id="hostEdit-${host.replace(/\\./g, '-')}" style="display:none;">
+            const hostEditForm = isArchived ? '' : `<div class="host-edit-form" id="hostEdit-${host.replace(/\\./g, '-')}" style="display:none;">
                 <div class="method-toggle">
                     <button type="button" class="method-toggle-btn${hostMethod === 'ssh' ? ' active' : ''}" onclick="setEditMethod('${host}', 'ssh')">SSH</button>
                     <button type="button" class="method-toggle-btn${hostMethod === 'push' ? ' active' : ''}" onclick="setEditMethod('${host}', 'push')">Push</button>
@@ -1657,7 +1743,7 @@
             const rescanBtn = hostMethod === 'push'
                 ? `<button class="host-action-btn reload disabled" title="Push hosts sync automatically" disabled>↻</button>`
                 : `<button class="host-action-btn reload" onclick="event.stopPropagation();rescanHost('${fullHostEntry}')" title="Rescan host">↻</button>`;
-            const hostActions = `
+            const hostActions = isArchived ? '' : `
                 <div class="host-actions">
                     ${rescanBtn}
                     <button class="host-action-btn edit" onclick="event.stopPropagation();showHostEdit('${host}')" title="Edit host">✎</button>
@@ -1667,7 +1753,7 @@
             if (hasDisks) {
                 // Normal host with disks
                 const critical = disks.filter(d => d.status === 'critical').length;
-                const warning = disks.filter(d => d.status === 'warning').length;
+                const warning = disks.filter(d => d.status === 'warning' || d.status === 'missing').length;
                 const capacityTB = (disks.reduce((s, d) => s + (d.capacity_bytes || 0), 0) / 1e12).toFixed(1);
                 
                 // Find most recent scan timestamp for this host
@@ -1681,47 +1767,92 @@
                 if (critical > 0) badge = `<span class="host-badge critical">${critical} critical</span>`;
                 else if (warning > 0) badge = `<span class="host-badge warning">${warning} warning</span>`;
                 
-                html += `<div class="host-group" data-host="${host}">
-                    <div class="host-header" onclick="this.parentElement.classList.toggle('collapsed')">
-                        <div>
-                            <span class="host-name-display" id="hostDisplay-${host.replace(/\\./g, '-')}">${methodBadge}${userDisplay}${host}${pushHint}</span>
-                            ${hostEditForm}
-                            <span id="hostBadge-${host.replace(/\\./g, '-')}">${badge}</span>
+                // Archived host has different header
+                if (isArchived) {
+                    const collapsedClass = isHostCollapsed(host) ? ' collapsed' : '';
+                    html += `<div class="host-group${collapsedClass}" data-host="${host}">
+                        <div class="host-header" onclick="toggleHostCollapsed('${host}')">
+                            <div>
+                                <span class="host-name-display" style="color:var(--text-muted)">Archived</span>
+                            </div>
+                            <div class="host-stats"><span>${disks.length} disk${disks.length !== 1 ? 's' : ''} · ${capacityTB} TB</span><span class="host-toggle">▼</span></div>
                         </div>
-                        <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span><span class="host-toggle">▼</span></div>
-                    </div>
-                    <div class="host-content">
-                        <table class="disk-table">
-                            <colgroup>
-                                <col style="width: 120px">
-                                <col style="width: 60px">
-                                <col style="width: 240px">
-                                <col style="width: 150px">
-                                <col style="width: 80px">
-                                <col style="width: 80px">
-                                <col style="width: 60px">
-                                <col style="width: 60px">
-                                <col style="width: 60px">
-                                <col style="width: 100px">
-                                <col>
-                            </colgroup>
-                            <thead><tr>
-                                <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('type')">Type <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('temp')">${getTempSymbol()} <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('since')">Since <span class="info-icon" data-tip="Time since first scan of this disk. Shows how long we have historical data.">ⓘ</span> <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('last')">Last <span class="info-icon" data-tip="Time since last scan. Shows how current the data is.">ⓘ</span> <span class="sort-icon">⇅</span></th>
-                                <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
-                                <th>Issues</th>
-                            </tr></thead>
-                            <tbody>${sortedDisks(disks).map(d => renderDisk(d)).join('')}</tbody>
-                        </table>
-                    </div>
-                </div>`;
+                        <div class="host-content">
+                            <table class="disk-table">
+                                <colgroup>
+                                    <col style="width: 120px">
+                                    <col style="width: 60px">
+                                    <col style="width: 240px">
+                                    <col style="width: 150px">
+                                    <col style="width: 80px">
+                                    <col style="width: 80px">
+                                    <col style="width: 60px">
+                                    <col style="width: 60px">
+                                    <col style="width: 60px">
+                                    <col style="width: 100px">
+                                    <col>
+                                </colgroup>
+                                <thead><tr>
+                                    <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('type')">Type <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('temp')">${getTempSymbol()} <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('since')">First <span class="info-icon" data-tip="Time since first scan of this disk. Shows how long we have historical data.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('last')">Last <span class="info-icon" data-tip="Time since last scan. Shows how current the data is.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
+                                    <th>From</th>
+                                </tr></thead>
+                                <tbody>${sortedDisks(disks).map(d => renderDisk(d, true)).join('')}</tbody>
+                            </table>
+                        </div>
+                    </div>`;
+                } else {
+                    const collapsedClass = isHostCollapsed(host) ? ' collapsed' : '';
+                    html += `<div class="host-group${collapsedClass}" data-host="${host}">
+                        <div class="host-header" onclick="toggleHostCollapsed('${host}')">
+                            <div>
+                                <span class="host-name-display" id="hostDisplay-${host.replace(/\\./g, '-')}">${methodBadge}${userDisplay}${host}${pushHint}</span>
+                                ${hostEditForm}
+                                <span id="hostBadge-${host.replace(/\\./g, '-')}">${badge}</span>
+                            </div>
+                            <div class="host-stats"><span>${disks.length} drives · ${capacityTB} TB${lastScan ? ` · ${lastScan}` : ''}</span><span id="hostActions-${host.replace(/\\./g, '-')}">${hostActions}</span><span class="host-toggle">▼</span></div>
+                        </div>
+                        <div class="host-content">
+                            <table class="disk-table">
+                                <colgroup>
+                                    <col style="width: 120px">
+                                    <col style="width: 60px">
+                                    <col style="width: 240px">
+                                    <col style="width: 150px">
+                                    <col style="width: 80px">
+                                    <col style="width: 80px">
+                                    <col style="width: 60px">
+                                    <col style="width: 60px">
+                                    <col style="width: 60px">
+                                    <col style="width: 100px">
+                                    <col>
+                                </colgroup>
+                                <thead><tr>
+                                    <th class="sortable" onclick="sortDisks('device')">Device <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('type')">Type <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('model')">Model <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('serial')">Serial <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('size')">Size <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('hours')">Hours <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('temp')">${getTempSymbol()} <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('since')">First <span class="info-icon" data-tip="Time since first scan of this disk. Shows how long we have historical data.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('last')">Last <span class="info-icon" data-tip="Time since last scan. Shows how current the data is.">ⓘ</span> <span class="sort-icon">⇅</span></th>
+                                    <th class="sortable" onclick="sortDisks('status')">Status <span class="sort-icon">⇅</span></th>
+                                    <th>Issues</th>
+                                </tr></thead>
+                                <tbody>${sortedDisks(disks).map(d => renderDisk(d)).join('')}</tbody>
+                            </table>
+                        </div>
+                    </div>`;
+                }
             } else {
                 // Host without disks - show status
                 const statusLabels = {
@@ -1793,7 +1924,7 @@
         applyFilters();
     }
     
-    function renderDisk(d) {
+    function renderDisk(d, isArchived = false) {
         const typeClass = (d.type || '').toLowerCase();
         const statusDot = d.smart_status === 'PASSED' ? 'ok' : 'fail';
         const capacity = d.capacity_bytes >= 1e12 ? (d.capacity_bytes / 1e12).toFixed(1) + 'TB' : (d.capacity_bytes / 1e9).toFixed(0) + 'GB';
@@ -1807,6 +1938,21 @@
         const hoursFmt = fmtHours(hours);
         let tempRaw = getTemp(attrs);
         let temp = formatTemp(tempRaw);
+        
+        // Check temperature against thresholds
+        let tempClass = '';
+        if (tempRaw !== null && data.thresholds) {
+            const isNVMe = d.type === 'NVMe';
+            const ruleSet = isNVMe ? (data.thresholds.nvme || {}) : (data.thresholds.ata || {});
+            const tempKey = isNVMe ? 'Temperature' : 'Temperature_Celsius';
+            const critRule = (ruleSet.critical || {})[tempKey];
+            const warnRule = (ruleSet.warning || {})[tempKey];
+            if (critRule && checkThreshold(tempRaw, critRule)) {
+                tempClass = 'temp-critical';
+            } else if (warnRule && checkThreshold(tempRaw, warnRule)) {
+                tempClass = 'temp-warning';
+            }
+        }
 
         // Calculate data availability (time since first reading)
         const hMeta = hist || {};
@@ -1834,7 +1980,7 @@
         const lastText = formatAge(d.timestamp, true);
 
         // Issues - already filtered by backend based on delta
-        let issues = '';
+        let issueSpans = '';
         if (d.issues && d.issues.length > 0) {
             for (const issue of d.issues) {
                 let deltaStr = '';
@@ -1844,8 +1990,26 @@
                         deltaStr = ` <span class="issue-delta" title="+${delta} in selected period">(+${delta})</span>`;
                     }
                 }
-                issues += `<span class="issue ${issue.level}">${issue.text}${deltaStr}</span>`;
+                issueSpans += `<span class="issue ${issue.level}">${issue.text}${deltaStr}</span>`;
             }
+        }
+        
+        // Build issues cell content
+        let issues = '';
+        if (isArchived) {
+            // Archived disk - show host and Restore button
+            const hostExists = data.hosts.includes(d.host);
+            const hostClass = hostExists ? 'mono muted' : 'mono muted host-removed';
+            const hostDisplay = `<span class="${hostClass}">${escapeHtml(d.host)}</span>`;
+            if (hostExists) {
+                issues = `${hostDisplay}<button class="restore-btn" onclick="event.stopPropagation(); restoreDisk('${escapeHtml(diskId)}')" title="Restore to active disks">Restore</button>`;
+            } else {
+                issues = `${hostDisplay}<button class="restore-btn disabled" disabled title="Cannot restore - host is no longer configured">Restore</button>`;
+            }
+        } else if (d.status === 'missing') {
+            issues = `<span class="issues-list">${issueSpans || '-'}</span><button class="archive-btn" onclick="event.stopPropagation(); archiveDisk('${escapeHtml(diskId)}')" title="Move to archive. History is preserved.">Archive</button>`;
+        } else {
+            issues = issueSpans || '-';
         }
 
         // Determine health attrs for this disk type
@@ -1936,18 +2100,19 @@
             infoBanner = `<div class="data-coverage-info">ℹ Data available: ${sinceText} · Filter: ${filterStr}</div>`;
         }
 
-        return `<tr class="disk-row ${d.status}" data-type="${d.type}" data-status="${d.status}" data-diskid="${escapeHtml(diskId)}" data-serial="${escapeHtml(d.serial || '')}" onclick="toggleDetail('${eid}')">
+        const rowClass = isArchived ? 'disk-row' : `disk-row ${d.status}`;
+        return `<tr class="${rowClass}" data-type="${d.type}" data-status="${d.status}" data-diskid="${escapeHtml(diskId)}" data-serial="${escapeHtml(d.serial || '')}" onclick="toggleDetail('${eid}')">
             <td><span class="device-name">${d.device}</span></td>
             <td><span class="type-badge ${typeClass}">${d.type}</span></td>
             <td>${d.model || '-'}</td>
             <td class="mono muted">${d.serial}</td>
             <td>${capacity}</td>
             <td class="mono">${hoursFmt}</td>
-            <td>${temp !== '-' ? temp + '°' : '-'}</td>
+            <td class="${tempClass}">${temp !== '-' ? temp + '°' : '-'}</td>
             <td class="${sinceClass}"${sinceTooltip ? ` title="${sinceTooltip}"` : ''}>${sinceText}</td>
             <td>${lastText}</td>
             <td><span class="status-dot ${statusDot}"></span>${d.smart_status}</td>
-            <td>${issues || '-'}</td>
+            <td class="issues-cell">${issues || '-'}</td>
         </tr>
         <tr class="detail-row" id="detail-${eid}" data-diskid="${escapeHtml(diskId)}" data-serial="${escapeHtml(d.serial || '')}">
             <td colspan="11">
@@ -2006,6 +2171,13 @@
             const hostGroup = target.closest('.host-group');
             if (hostGroup && hostGroup.classList.contains('collapsed')) {
                 hostGroup.classList.remove('collapsed');
+                // Save state
+                const host = hostGroup.dataset.host;
+                if (host) {
+                    const state = getHostCollapsedState();
+                    state[host] = false;
+                    localStorage.setItem('hostCollapsed', JSON.stringify(state));
+                }
             }
             document.querySelectorAll('.detail-row.visible').forEach(el => el.classList.remove('visible'));
             target.classList.add('visible');
@@ -2017,6 +2189,24 @@
         statusFilter = s;
         document.querySelectorAll('.stat').forEach(el => el.classList.remove('active'));
         if (s) event.target.closest('.stat').classList.add('active');
+        
+        // Special handling for archived - show only Archived section
+        if (s === 'archived') {
+            document.querySelectorAll('.host-group').forEach(g => {
+                if (g.dataset.host === 'Archived') {
+                    g.style.display = '';
+                    g.classList.remove('collapsed');
+                    // Save state
+                    const state = getHostCollapsedState();
+                    state['Archived'] = false;
+                    localStorage.setItem('hostCollapsed', JSON.stringify(state));
+                } else {
+                    g.style.display = 'none';
+                }
+            });
+            return;
+        }
+        
         applyFilters();
     }
     
@@ -2025,7 +2215,25 @@
         const type = document.getElementById('typeFilter').value;
         const search = document.getElementById('search').value.toLowerCase();
         
+        // Special handling for archived filter
+        if (statusFilter === 'archived') {
+            document.querySelectorAll('.host-group').forEach(g => {
+                if (g.dataset.host === 'Archived') {
+                    g.style.display = '';
+                } else {
+                    g.style.display = 'none';
+                }
+            });
+            return;
+        }
+        
         document.querySelectorAll('.host-group').forEach(g => {
+            // Skip Archived section for normal status filters
+            if (g.dataset.host === 'Archived') {
+                g.style.display = statusFilter ? 'none' : '';
+                return;
+            }
+            
             if (host && g.dataset.host !== host) { g.style.display = 'none'; return; }
             g.style.display = '';
             let visible = 0;
@@ -2681,6 +2889,61 @@
             }
         } catch (e) {
             console.error('Failed to approve/dismiss host:', e);
+        }
+    }
+    
+    let pendingArchiveDiskId = null;
+    
+    function archiveDisk(diskId) {
+        pendingArchiveDiskId = diskId;
+        document.getElementById('archiveModal').classList.add('visible');
+    }
+    
+    function closeArchiveModal() {
+        document.getElementById('archiveModal').classList.remove('visible');
+        pendingArchiveDiskId = null;
+    }
+    
+    // Close modal on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && document.getElementById('archiveModal').classList.contains('visible')) {
+            closeArchiveModal();
+        }
+    });
+    
+    async function confirmArchive() {
+        if (!pendingArchiveDiskId) return;
+        const diskId = pendingArchiveDiskId;
+        closeArchiveModal();
+        
+        try {
+            const res = await fetch('/api/disk/archive', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({disk_id: diskId})
+            });
+            const result = await res.json();
+            if (result.success) {
+                await loadData();
+            }
+        } catch (e) {
+            console.error('Failed to archive disk:', e);
+        }
+    }
+    
+    async function restoreDisk(diskId) {
+        try {
+            const res = await fetch('/api/disk/unarchive', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({disk_id: diskId})
+            });
+            const result = await res.json();
+            if (result.success) {
+                await loadData();
+            }
+        } catch (e) {
+            console.error('Failed to restore disk:', e);
         }
     }
     
@@ -3732,5 +3995,16 @@
     document.getElementById('refreshIntervalSelect').value = savedInterval;
     startAutoRefresh();
     </script>
+    <!-- Archive Modal -->
+    <div class="modal-overlay" id="archiveModal" onclick="if(event.target === this) closeArchiveModal()">
+        <div class="modal">
+            <div class="modal-title">Move to Archive?</div>
+            <div class="modal-text">History data is preserved and you can restore it anytime from the Archive section.</div>
+            <div class="modal-actions">
+                <button class="modal-btn modal-btn-cancel" onclick="closeArchiveModal()">Cancel</button>
+                <button class="modal-btn modal-btn-confirm" onclick="confirmArchive()">Archive</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

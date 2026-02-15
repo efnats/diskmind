@@ -141,6 +141,45 @@ def get_current_readings(db_path: str) -> list[dict]:
     return results
 
 
+def get_archived_disks(db_path: str) -> set:
+    """Get set of archived disk_ids."""
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='archived_disks'")
+    if not cursor.fetchone():
+        conn.close()
+        return set()
+    cursor.execute("SELECT disk_id FROM archived_disks")
+    result = {row['disk_id'] for row in cursor.fetchall()}
+    conn.close()
+    return result
+
+
+def archive_disk(db_path: str, disk_id: str):
+    """Move a disk to archive (hidden from main view, history preserved)."""
+    conn = get_db_connection(db_path)
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS archived_disks (
+            disk_id TEXT PRIMARY KEY,
+            archived_at DATETIME NOT NULL
+        )
+    ''')
+    conn.execute(
+        "INSERT OR REPLACE INTO archived_disks (disk_id, archived_at) VALUES (?, datetime('now'))",
+        (disk_id,)
+    )
+    conn.commit()
+    conn.close()
+
+
+def unarchive_disk(db_path: str, disk_id: str):
+    """Restore disk from archive."""
+    conn = get_db_connection(db_path)
+    conn.execute("DELETE FROM archived_disks WHERE disk_id = ?", (disk_id,))
+    conn.commit()
+    conn.close()
+
+
 def get_trends(db_path: str, days: int = 30) -> dict:
     """Get sector trends for each disk (reallocated sectors change over time)."""
     conn = get_db_connection(db_path)
@@ -358,6 +397,7 @@ def get_stats(readings: list[dict]) -> dict:
     critical = 0
     warning = 0
     healthy = 0
+    missing = 0
     total_capacity = 0
     
     for r in readings:
@@ -368,6 +408,8 @@ def get_stats(readings: list[dict]) -> dict:
             critical += 1
         elif status == 'warning':
             warning += 1
+        elif status == 'missing':
+            missing += 1
         else:
             healthy += 1
     
@@ -375,6 +417,7 @@ def get_stats(readings: list[dict]) -> dict:
         'total': total,
         'critical': critical,
         'warning': warning,
+        'missing': missing,
         'healthy': healthy,
         'total_capacity_tb': round(total_capacity / 1e12, 1) if total_capacity else 0,
     }
@@ -764,11 +807,55 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 # Get host status from DB
                 host_status = get_host_status(self.db_path)
                 
+                # Get archived disks
+                archived = get_archived_disks(self.db_path)
+                
                 # Filter readings to only configured hosts
                 if configured_hosts:
                     readings = [r for r in readings if r['host'] in configured_hosts]
                 else:
                     readings = []
+                
+                # Separate archived disks for the archive section
+                archived_readings = []
+                active_readings = []
+                
+                # Detect missing disks: disk was seen on host but not in latest scan
+                # A disk is missing if its timestamp < host's last_success
+                for r in readings:
+                    disk_id = r.get('disk_id') or r.get('serial')
+                    host = r.get('host')
+                    
+                    # Check timestamps to detect missing/reappeared disks
+                    hs = host_status.get(host, {})
+                    last_success = hs.get('last_success')
+                    disk_timestamp = r.get('timestamp')
+                    
+                    disk_is_current = False
+                    if last_success and disk_timestamp:
+                        # Disk is current if its timestamp >= host's last scan
+                        disk_is_current = disk_timestamp >= last_success
+                    
+                    # If disk reappeared (current) and was archived, unarchive it
+                    if disk_is_current and disk_id in archived:
+                        unarchive_disk(self.db_path, disk_id)
+                        archived.discard(disk_id)  # Update local set
+                    
+                    # Now categorize the disk
+                    if disk_id in archived:
+                        # Still archived (not current)
+                        r['_archived'] = True
+                        archived_readings.append(r)
+                    elif not disk_is_current and last_success and disk_timestamp:
+                        # Missing (not archived, but not in latest scan)
+                        r['_missing'] = True
+                        r['_last_seen'] = disk_timestamp
+                        active_readings.append(r)
+                    else:
+                        # Active disk
+                        active_readings.append(r)
+                
+                readings = active_readings
                 
                 hosts = list(set(r['host'] for r in readings))
                 
@@ -795,8 +882,25 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     disk_id = r.get('disk_id') or r.get('serial')
                     disk_history = history_data.get(disk_id, {})
                     
-                    r['status'] = classify_disk(r, thresholds, disk_history, delta_days)
-                    r['issues'] = get_disk_issues(r, thresholds, disk_history, delta_days)
+                    # Missing disks get special status
+                    if r.get('_missing'):
+                        r['status'] = 'missing'
+                        r['issues'] = [{'level': 'warning', 'text': 'Missing'}]
+                    else:
+                        r['status'] = classify_disk(r, thresholds, disk_history, delta_days)
+                        r['issues'] = get_disk_issues(r, thresholds, disk_history, delta_days)
+                
+                # Parse archived disks (for display in archive section)
+                for r in archived_readings:
+                    if r.get('smart_attributes'):
+                        try:
+                            r['smart_attributes'] = json.loads(r['smart_attributes'])
+                        except Exception:
+                            r['smart_attributes'] = {}
+                    else:
+                        r['smart_attributes'] = {}
+                    r['status'] = 'archived'
+                    r['issues'] = []
                 
                 # Recalculate stats based on new status values
                 stats = get_stats(readings)
@@ -819,6 +923,7 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 # Also send thresholds to frontend for client-side awareness
                 self.send_json({
                     'disks': readings,
+                    'archived_disks': archived_readings,
                     'hosts': sorted(configured_hosts),
                     'host_status': all_host_status,
                     'push_attempts': get_push_attempts(self.db_path),
@@ -1361,6 +1466,36 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     print(f"[warn] Failed to clear push attempts for {host}: {e}", file=sys.stderr)
                 
                 self.send_json({'success': True, 'action': action, 'host': host})
+            
+            elif path == '/api/disk/archive':
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                
+                disk_id = data.get('disk_id')
+                if not disk_id:
+                    self.send_json({'error': 'Missing disk_id'}, 400)
+                    return
+                
+                archive_disk(self.db_path, disk_id)
+                self.send_json({'success': True, 'disk_id': disk_id})
+            
+            elif path == '/api/disk/unarchive':
+                try:
+                    data = json.loads(body) if body else {}
+                except json.JSONDecodeError:
+                    self.send_json({'error': 'Invalid JSON'}, 400)
+                    return
+                
+                disk_id = data.get('disk_id')
+                if not disk_id:
+                    self.send_json({'error': 'Missing disk_id'}, 400)
+                    return
+                
+                unarchive_disk(self.db_path, disk_id)
+                self.send_json({'success': True, 'disk_id': disk_id})
             
             else:
                 self.send_response(404)

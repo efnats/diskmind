@@ -208,6 +208,11 @@ def init_database(db_path: str) -> sqlite3.Connection:
             success INTEGER DEFAULT 0,
             error TEXT
         );
+        
+        CREATE TABLE IF NOT EXISTS archived_disks (
+            disk_id TEXT PRIMARY KEY,
+            archived_at DATETIME NOT NULL
+        );
     ''')
     
     return conn

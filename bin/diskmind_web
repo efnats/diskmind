@@ -28,7 +28,7 @@ from diskmind_core import (VERSION, parse_simple_yaml, classify_disk,
                           get_disk_issues, check_threshold, decode_seagate_value,
                           generate_alerts, send_notifications, _send_webhook,
                           _format_payload, load_thresholds_from_dir, load_preset_thresholds,
-                          DEFAULT_PRESET,
+                          DEFAULT_PRESET, check_missing_disks, check_disk_reappeared,
                           CUMULATIVE_EVENT_ATTRS, CRITICAL_STATE_ATTRS)
 
 from collections import defaultdict
@@ -810,50 +810,41 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                 # Get archived disks
                 archived = get_archived_disks(self.db_path)
                 
-                # Filter readings to only configured hosts
-                if configured_hosts:
-                    readings = [r for r in readings if r['host'] in configured_hosts]
-                else:
-                    readings = []
-                
-                # Separate archived disks for the archive section
+                # Process all readings
                 archived_readings = []
                 active_readings = []
                 
-                # Detect missing disks: disk was seen on host but not in latest scan
-                # A disk is missing if its timestamp < host's last_success
                 for r in readings:
                     disk_id = r.get('disk_id') or r.get('serial')
                     host = r.get('host')
+                    host_configured = host in configured_hosts
                     
-                    # Check timestamps to detect missing/reappeared disks
+                    # Check if disk is in current scan
                     hs = host_status.get(host, {})
                     last_success = hs.get('last_success')
                     disk_timestamp = r.get('timestamp')
+                    disk_is_current = last_success and disk_timestamp and disk_timestamp >= last_success
                     
-                    disk_is_current = False
-                    if last_success and disk_timestamp:
-                        # Disk is current if its timestamp >= host's last scan
-                        disk_is_current = disk_timestamp >= last_success
+                    is_archived = disk_id in archived
                     
-                    # If disk reappeared (current) and was archived, unarchive it
-                    if disk_is_current and disk_id in archived:
+                    # Case 1: Disk reappeared (archived + configured host + in current scan)
+                    if is_archived and host_configured and disk_is_current:
                         unarchive_disk(self.db_path, disk_id)
-                        archived.discard(disk_id)  # Update local set
+                        archived.discard(disk_id)
+                        is_archived = False  # Now active
                     
-                    # Now categorize the disk
-                    if disk_id in archived:
-                        # Still archived (not current)
+                    # Categorize
+                    if is_archived:
+                        # Archived disk (show regardless of host config)
                         r['_archived'] = True
                         archived_readings.append(r)
-                    elif not disk_is_current and last_success and disk_timestamp:
-                        # Missing (not archived, but not in latest scan)
-                        r['_missing'] = True
-                        r['_last_seen'] = disk_timestamp
+                    elif host_configured:
+                        # Active or missing disk on configured host
+                        if not disk_is_current and last_success and disk_timestamp:
+                            r['_missing'] = True
+                            r['_last_seen'] = disk_timestamp
                         active_readings.append(r)
-                    else:
-                        # Active disk
-                        active_readings.append(r)
+                    # else: Skip - host not configured and not archived
                 
                 readings = active_readings
                 
@@ -1394,6 +1385,18 @@ class SmartHTTPHandler(BaseHTTPRequestHandler):
                     # Use notification-specific thresholds (may differ from dashboard view)
                     notify_thresholds = get_notification_thresholds()
                     new_alerts = generate_alerts(conn, readings, notify_thresholds, timestamp)
+                    
+                    # Check for reappeared disks
+                    for r in readings:
+                        disk_id = r.get('disk_id') or r.get('serial')
+                        reappeared = check_disk_reappeared(conn, host, disk_id, timestamp)
+                        new_alerts.extend(reappeared)
+                    
+                    # Check for missing disks on this host
+                    scanned_disk_ids = set(r.get('disk_id') or r.get('serial') for r in readings)
+                    missing_alerts = check_missing_disks(conn, host, scanned_disk_ids, timestamp)
+                    new_alerts.extend(missing_alerts)
+                    
                     if new_alerts:
                         notify_config = config.get('notifications', {})
                         send_notifications(conn, new_alerts, notify_config,

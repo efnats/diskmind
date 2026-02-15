@@ -624,6 +624,164 @@ def generate_alerts(conn, readings: list[dict], thresholds: dict,
     return new_alerts
 
 
+def check_missing_disks(conn, host: str, scanned_disk_ids: set, timestamp: str) -> list[dict]:
+    """Check for disks that were on a host but are now missing.
+
+    Args:
+        conn: SQLite connection
+        host: Host that was just scanned
+        scanned_disk_ids: Set of disk_ids found in this scan
+        timestamp: Current scan timestamp
+
+    Returns:
+        List of newly created alert dicts (for notification sending).
+    """
+    cursor = conn.cursor()
+    new_alerts = []
+
+    # Get disks that were recently seen on this host (last 7 days)
+    cursor.execute('''
+        SELECT DISTINCT r.disk_id, r.device, r.model, r.serial
+        FROM readings r
+        WHERE r.host = ?
+          AND r.timestamp > datetime(?, '-7 days')
+        GROUP BY r.disk_id
+        HAVING MAX(r.timestamp) = (
+            SELECT MAX(r2.timestamp) FROM readings r2 WHERE r2.disk_id = r.disk_id
+        )
+    ''', (host, timestamp))
+    
+    known_disks = cursor.fetchall()
+
+    # Get archived disks
+    cursor.execute('SELECT disk_id FROM archived_disks')
+    archived = set(row[0] for row in cursor.fetchall())
+
+    for disk_id, device, model, serial in known_disks:
+        # Skip if disk was in this scan
+        if disk_id in scanned_disk_ids:
+            continue
+
+        # Skip if archived
+        if disk_id in archived:
+            continue
+
+        # Check if we already alerted for this disk being missing (last 24h)
+        cursor.execute('''
+            SELECT id FROM alerts
+            WHERE disk_id = ? AND alert_type = 'disk_missing'
+              AND timestamp > datetime(?, '-24 hours')
+        ''', (disk_id, timestamp))
+        
+        if cursor.fetchone():
+            continue  # Already alerted recently
+
+        # Generate missing disk alert
+        msg = f'Disk missing from {host} — {model} ({serial}) was {device}'
+        alert = {
+            'alert_type': 'disk_missing',
+            'severity': 'warning',
+            'attribute': 'presence',
+            'old_value': 'present',
+            'new_value': 'missing',
+            'message': msg,
+        }
+
+        # Save to DB
+        cursor.execute('''
+            INSERT INTO alerts
+                (disk_id, host, timestamp, alert_type, severity,
+                 attribute, old_value, new_value, message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (disk_id, host, timestamp, alert['alert_type'], alert['severity'],
+              alert['attribute'], alert['old_value'], alert['new_value'],
+              alert['message']))
+        alert['id'] = cursor.lastrowid
+        alert['disk_id'] = disk_id
+        alert['host'] = host
+        alert['timestamp'] = timestamp
+        
+        new_alerts.append(alert)
+
+    if new_alerts:
+        conn.commit()
+
+    return new_alerts
+
+
+def check_disk_reappeared(conn, host: str, disk_id: str, timestamp: str) -> list[dict]:
+    """Check if a previously missing disk has reappeared.
+
+    Args:
+        conn: SQLite connection
+        host: Host where disk was found
+        disk_id: Disk that reappeared
+        timestamp: Current scan timestamp
+
+    Returns:
+        List of recovery alert dicts (for notification sending).
+    """
+    cursor = conn.cursor()
+    new_alerts = []
+
+    # Check if there's a recent missing alert for this disk
+    cursor.execute('''
+        SELECT id, host FROM alerts
+        WHERE disk_id = ? AND alert_type = 'disk_missing'
+          AND timestamp > datetime(?, '-7 days')
+        ORDER BY timestamp DESC LIMIT 1
+    ''', (disk_id, timestamp))
+    
+    row = cursor.fetchone()
+    if not row:
+        return []
+
+    # Get disk info
+    cursor.execute('''
+        SELECT device, model, serial FROM readings
+        WHERE disk_id = ? ORDER BY timestamp DESC LIMIT 1
+    ''', (disk_id,))
+    disk_row = cursor.fetchone()
+    if not disk_row:
+        return []
+
+    device, model, serial = disk_row
+    old_host = row[1]
+
+    # Generate recovery alert
+    if old_host == host:
+        msg = f'Disk reappeared on {host} — {model} ({serial}) {device}'
+    else:
+        msg = f'Disk reappeared on {host} (was on {old_host}) — {model} ({serial}) {device}'
+
+    alert = {
+        'alert_type': 'disk_reappeared',
+        'severity': 'recovery',
+        'attribute': 'presence',
+        'old_value': 'missing',
+        'new_value': 'present',
+        'message': msg,
+    }
+
+    cursor.execute('''
+        INSERT INTO alerts
+            (disk_id, host, timestamp, alert_type, severity,
+             attribute, old_value, new_value, message)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (disk_id, host, timestamp, alert['alert_type'], alert['severity'],
+          alert['attribute'], alert['old_value'], alert['new_value'],
+          alert['message']))
+    alert['id'] = cursor.lastrowid
+    alert['disk_id'] = disk_id
+    alert['host'] = host
+    alert['timestamp'] = timestamp
+
+    conn.commit()
+    new_alerts.append(alert)
+
+    return new_alerts
+
+
 # ---------------------------------------------------------------------------
 # Webhook Notifications
 # ---------------------------------------------------------------------------

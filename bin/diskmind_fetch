@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Shared library
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from diskmind_core import VERSION, parse_simple_yaml, load_thresholds_from_dir, generate_alerts, send_notifications
+from diskmind_core import VERSION, parse_simple_yaml, load_thresholds_from_dir, generate_alerts, send_notifications, check_missing_disks, check_disk_reappeared
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +460,7 @@ def main():
     total_disks = 0
     successful_hosts = 0
     all_readings = []
+    scanned_hosts = {}  # host -> set of disk_ids
     
     print("Collecting data:")
     for host_info in hosts:
@@ -480,21 +481,38 @@ def main():
             all_readings.extend(readings)
             total_disks += len(readings)
             successful_hosts += 1
+            # Track scanned disk IDs for this host
+            scanned_hosts[host] = set(r.get('disk_id') or r.get('serial') for r in readings)
             print(f"✓ {len(readings)} disks")
         else:
             msg = result['message'] or result['status']
             print(f"✗ {msg}")
     
     # Generate alerts and send notifications
+    new_alerts = []
     if all_readings:
         config_dir = Path(__file__).resolve().parent.parent / 'config'
         thresholds = load_thresholds_from_dir(config_dir)
         new_alerts = generate_alerts(conn, all_readings, thresholds, timestamp)
-        if new_alerts:
-            notify_config = config.get('notifications', {})
-            send_notifications(conn, new_alerts, notify_config,
-                               config.get('webhook_urls', []))
-            print(f"  Alerts: {len(new_alerts)} generated")
+        
+        # Check for reappeared disks (disks that were missing but now found)
+        for r in all_readings:
+            disk_id = r.get('disk_id') or r.get('serial')
+            host = r.get('host')
+            reappeared = check_disk_reappeared(conn, host, disk_id, timestamp)
+            new_alerts.extend(reappeared)
+    
+    # Check for missing disks on each successfully scanned host
+    for host, disk_ids in scanned_hosts.items():
+        missing_alerts = check_missing_disks(conn, host, disk_ids, timestamp)
+        new_alerts.extend(missing_alerts)
+    
+    # Send all notifications
+    if new_alerts:
+        notify_config = config.get('notifications', {})
+        send_notifications(conn, new_alerts, notify_config,
+                           config.get('webhook_urls', []))
+        print(f"  Alerts: {len(new_alerts)} generated")
     
     print()
     print(f"Collected: {total_disks} disks from {successful_hosts}/{len(hosts)} hosts")
